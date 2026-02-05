@@ -13,6 +13,7 @@ import {
   Loader2,
   X,
 } from "lucide-react";
+import axios from "axios";
 
 const MapPicker = dynamic(() => import("@/components/MapPicker"), {
   ssr: false,
@@ -43,6 +44,15 @@ export default function InputScreen() {
   const [files, setFiles] = useState<UploadItem[]>([]);
   const [dragging, setDragging] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+
+  
+
+  const [title, setTitle] = useState("");
+  const [disasterType, setDisasterType] = useState("");
+  const [description, setDescription] = useState("");
+  const [latitude, setLatitude] = useState<number | null>(null);
+  const [longitude, setLongitude] = useState<number | null>(null);
+
 
   function handleFiles(selected: File[]) {
     const newFiles: UploadItem[] = selected.map((file) => ({
@@ -82,6 +92,89 @@ export default function InputScreen() {
     }, 3500);
   }
 
+  async function handleNext() {
+    try {
+      if (!latitude || !longitude) {
+        alert("Please select a location on the map");
+        return;
+      }
+
+      const payload = {
+        title,
+        location: place,
+        latitude,
+        longitude,
+        disasterType,
+      };
+
+      const response = await axios.post(
+        `${process.env.NEXT_PUBLIC_BACKENED_DOMAIN}/projects/`,
+        payload,
+        {
+          headers: {
+            "Content-Type": "application/json",
+          },
+        }
+      );
+      console.log("Post created:", response.data);
+      localStorage.setItem("projectId", response.data.id);
+      // move to step 2 only after successful POST
+      setStep(2);
+    } catch (error) {
+      console.error("Post creation failed:", error);
+      alert("Failed to create post. Please try again.");
+    }
+  }
+    
+
+  async function uploadFiles() {
+  const projectId = localStorage.getItem("projectId");
+
+  if (!projectId) {
+    alert("Project ID not found");
+    return;
+  }
+
+  if (files.length === 0) {
+    alert("No files selected");
+    return;
+  }
+
+  const formData = new FormData();
+
+  files.forEach((item) => {
+    formData.append("files", item.file); 
+    // 👆 key name must match backend (files / media / attachments)
+  });
+
+  try {
+    setSubmitting(true);
+
+    const response = await fetch(
+      `${process.env.NEXT_PUBLIC_BACKENED_DOMAIN}/projects/${projectId}/upload`,
+      {
+        method: "POST",
+        body: formData,
+      }
+    );
+
+    if (!response.ok) {
+      throw new Error("File upload failed");
+    }
+
+    const data = await response.json();
+    console.log("Files uploaded:", data);
+
+    router.push("/dashboard");
+  } catch (error) {
+    console.error("Upload error:", error);
+    alert("Failed to upload files");
+  } finally {
+    setSubmitting(false);
+  }
+}
+
+
   return (
     <main className="min-h-screen bg-[#0b0a0b] flex items-center justify-center p-6">
       {/* SUBMIT SPINNER */}
@@ -108,11 +201,20 @@ export default function InputScreen() {
             }`}
           >
             <div className="space-y-4">
-              <Input placeholder="Project name" className={fieldClass} />
+              <Input
+                placeholder="Project name"
+                className={fieldClass}
+                value={title}
+                onChange={(e) => setTitle(e.target.value)}
+              />
+
               <Input
                 placeholder="Disaster type (Flood, Fire, Earthquake)"
                 className={fieldClass}
+                value={disasterType}
+                onChange={(e) => setDisasterType(e.target.value)}
               />
+
               <Input
                 placeholder="Coordinates"
                 value={coords}
@@ -129,19 +231,25 @@ export default function InputScreen() {
               <div className="h-64 w-full overflow-hidden rounded-lg border border-white/10">
                 <MapPicker
                   onChange={(lat, lng, placeName) => {
+                    setLatitude(lat);
+                    setLongitude(lng);
                     setCoords(`${lat.toFixed(6)}, ${lng.toFixed(6)}`);
                     setPlace(placeName);
                   }}
                 />
+
               </div>
 
               <Textarea
                 placeholder="Describe the situation..."
                 className={`${fieldClass} min-h-[120px]`}
+                value={description}
+                onChange={(e) => setDescription(e.target.value)}
               />
 
+
               <Button
-                onClick={() => setStep(2)}
+                onClick={handleNext}
                 className="w-full bg-white text-black hover:bg-white/90"
               >
                 Next
@@ -233,7 +341,7 @@ export default function InputScreen() {
               </Button>
 
               <Button
-                onClick={handleSubmit}
+                onClick={uploadFiles}
                 className="w-full bg-white text-black hover:bg-white/90"
               >
                 Submit
