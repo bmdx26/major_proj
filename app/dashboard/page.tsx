@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useRef } from "react"
+import { useState, useRef, useEffect } from "react"
 import dynamic from "next/dynamic"
 import { Conversation } from "@/components/chats/Chats"
 import { ChatInput } from "@/components/chats/ChatInput"
@@ -57,6 +57,82 @@ export default function DashboardPage() {
     if (!file) return
     setModelUrl(URL.createObjectURL(file))
   }
+  
+    useEffect(() => {
+    const projectId = localStorage.getItem("projectId");
+
+    if (!projectId) return;
+
+    const runPipeline = async () => {
+      try {
+        /* -------- 1. ANALYZE -------- */
+        const analyzeRes = await fetch(
+          `${process.env.NEXT_PUBLIC_BACKENED_DOMAIN}/projects/${projectId}/analyze`,
+          { method: "POST" }
+        );
+
+        if (!analyzeRes.ok) {
+          throw new Error("Analysis failed");
+        }
+
+        const analyzeData = await analyzeRes.json();
+        console.log("Analysis completed:", analyzeData);
+
+        /* -------- 2. EVENT SUMMARY -------- */
+        const summaryRes = await fetch(
+          `${process.env.NEXT_PUBLIC_BACKENED_DOMAIN}/projects/${projectId}/event-summary`,
+          { method: "POST" }
+        );
+
+        if (!summaryRes.ok) {
+          throw new Error("Event summary failed");
+        }
+
+        const summaryData = await summaryRes.json();
+        console.log("Event summary generated:", summaryData);
+
+        /* -------- 3. REPORT -------- */
+        const reportRes = await fetch(
+          `${process.env.NEXT_PUBLIC_BACKENED_DOMAIN}/projects/${projectId}/report`,
+          { method: "POST" }
+        );
+
+        if (!reportRes.ok) {
+          throw new Error("Report generation failed");
+        }
+
+        const reportData = await reportRes.json();
+        console.log("Report generated:", reportData);
+
+        /* -------- PUSH REPORT TO CHAT -------- */
+        if (reportData?.report) {
+          setMessages((prev) => [
+            ...prev,
+            {
+              id: crypto.randomUUID(),
+              from: "assistant",
+              text: reportData.report,
+            },
+          ]);
+        }
+      } catch (error) {
+        console.error("Pipeline error:", error);
+
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: crypto.randomUUID(),
+            from: "assistant",
+            text:
+              "⚠️ Failed to generate full report. Please try again later.",
+          },
+        ]);
+      }
+    };
+
+    runPipeline();
+  }, []);
+
 
   return (
     <main className="min-h-screen bg-[#0b0a0b] flex justify-center p-8 text-white">

@@ -125,6 +125,54 @@ export default function InputScreen() {
       alert("Failed to create post. Please try again.");
     }
   }
+    
+
+  async function uploadFiles() {
+  const projectId = localStorage.getItem("projectId");
+
+  if (!projectId) {
+    alert("Project ID not found");
+    return;
+  }
+
+  if (files.length === 0) {
+    alert("No files selected");
+    return;
+  }
+
+  const formData = new FormData();
+
+  files.forEach((item) => {
+    formData.append("files", item.file); 
+    // 👆 key name must match backend (files / media / attachments)
+  });
+
+  try {
+    setSubmitting(true);
+
+    const response = await fetch(
+      `${process.env.NEXT_PUBLIC_BACKENED_DOMAIN}/projects/${projectId}/upload`,
+      {
+        method: "POST",
+        body: formData,
+      }
+    );
+
+    if (!response.ok) {
+      throw new Error("File upload failed");
+    }
+
+    const data = await response.json();
+    console.log("Files uploaded:", data);
+
+    router.push("/dashboard");
+  } catch (error) {
+    console.error("Upload error:", error);
+    alert("Failed to upload files");
+  } finally {
+    setSubmitting(false);
+  }
+}
 
 
   return (
@@ -293,7 +341,7 @@ export default function InputScreen() {
               </Button>
 
               <Button
-                onClick={handleSubmit}
+                onClick={uploadFiles}
                 className="w-full bg-white text-black hover:bg-white/90"
               >
                 Submit
