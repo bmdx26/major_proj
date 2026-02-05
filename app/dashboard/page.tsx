@@ -1,6 +1,8 @@
 "use client"
 
+
 import { useState, useRef, useEffect } from "react"
+
 import dynamic from "next/dynamic"
 import { Conversation } from "@/components/chats/Chats"
 import { ChatInput } from "@/components/chats/ChatInput"
@@ -18,7 +20,6 @@ import {
   CardTitle,
   CardDescription,
 } from "@/components/ui/card"
-import { Button } from "@/components/ui/button"
 
 import {
   ContactCards,
@@ -30,6 +31,11 @@ const ModelViewerOBJ = dynamic(
   () => import("@/components/viewers/ModelViewerOBJ"),
   { ssr: false }
 )
+
+/* Upload panel */
+import ModelUploadPanel, {
+  UploadItem,
+} from "@/components/viewers/ModelUploadPanel"
 
 type ChatMessage = {
   id: string
@@ -48,14 +54,32 @@ export default function DashboardPage() {
     ])
   }
 
-  /* ---------------- 3D model state ---------------- */
-  const [modelUrl, setModelUrl] = useState<string | null>(null)
-  const fileInputRef = useRef<HTMLInputElement>(null)
+  /* ---------------- Photogrammetry upload state ---------------- */
+  const [files, setFiles] = useState<UploadItem[]>([])
+  const [dragging, setDragging] = useState(false)
 
-  function handleModelSelect(e: React.ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0]
-    if (!file) return
-    setModelUrl(URL.createObjectURL(file))
+  function handleFiles(selected: File[]) {
+    const newFiles: UploadItem[] = selected.map((file) => ({
+      id: crypto.randomUUID(),
+      file,
+      processing: true,
+    }))
+
+    setFiles((prev) => [...prev, ...newFiles])
+
+    newFiles.forEach((item) => {
+      setTimeout(() => {
+        setFiles((prev) =>
+          prev.map((f) =>
+            f.id === item.id ? { ...f, processing: false } : f
+          )
+        )
+      }, 2000)
+    })
+  }
+
+  function removeFile(id: string) {
+    setFiles((prev) => prev.filter((f) => f.id !== id))
   }
   
     useEffect(() => {
@@ -134,6 +158,16 @@ export default function DashboardPage() {
   }, []);
 
 
+  /* ---------------- TEMP generated 3D models ---------------- */
+  const [generatedModels] = useState<string[]>([
+    "/3d/temp_3d.obj",
+    "/3d/new_3d.obj",
+    
+  ])
+
+  /* ---------------- 3D model preview ---------------- */
+  const [modelUrl, setModelUrl] = useState<string | null>(null)
+
   return (
     <main className="min-h-screen bg-[#0b0a0b] flex justify-center p-8 text-white">
       <div className="w-full flex flex-col">
@@ -163,7 +197,7 @@ export default function DashboardPage() {
 
           {/* FRAME */}
           <div className="mt-6 flex-1 w-full rounded-xl border-2 border-dashed border-white/20 p-6 overflow-hidden">
-            
+
             {/* CHAT */}
             <TabsContent value="chat" className="mt-0 h-full flex flex-col">
               <Conversation messages={messages} className="flex-1" />
@@ -207,38 +241,57 @@ export default function DashboardPage() {
               </Card>
             </TabsContent>
 
-            {/* 3D MODELS (OBJ ONLY) */}
+            {/* 3D MODELS – LEFT STACK + RIGHT PREVIEW */}
             <TabsContent value="models" className="mt-0 h-full">
-              <div className="h-full flex flex-col gap-4">
-                {!modelUrl && (
-                  <div className="flex flex-col items-center justify-center h-full gap-4">
-                    <p className="text-white/60">
-                      Select a 3D model (OBJ)
+              <div className="h-full grid grid-cols-10 gap-4">
+
+                {/* LEFT – 20% (TOP: Upload, BOTTOM: Generated files) */}
+                <div className="col-span-2 flex flex-col gap-4">
+
+                  {/* Upload */}
+                  <div className="flex-1">
+                    <ModelUploadPanel
+                      files={files}
+                      dragging={dragging}
+                      setDragging={setDragging}
+                      onFiles={handleFiles}
+                      onRemove={removeFile}
+                    />
+                  </div>
+
+                  {/* Generated models list (TEMP) */}
+                  <div className="border border-white/10 rounded-lg p-2 overflow-auto">
+                    <p className="text-xs text-white/50 mb-2">
+                      Generated 3D Models
                     </p>
 
-                    <input
-                      ref={fileInputRef}
-                      type="file"
-                      accept=".obj"
-                      hidden
-                      onChange={handleModelSelect}
-                    />
-
-                    <Button
-                      className="bg-white text-black"
-                      onClick={() => fileInputRef.current?.click()}
-                    >
-                      Select 3D File
-                    </Button>
+                    {generatedModels.map((model) => (
+                      <button
+                        key={model}
+                        onClick={() => setModelUrl(model)}
+                        className="w-full text-left px-2 py-1 rounded text-xs text-white/80 hover:bg-white/10"
+                      >
+                        {model.split("/").pop()}
+                      </button>
+                    ))}
                   </div>
-                )}
 
-                {modelUrl && (
-                  <ModelViewerOBJ
-                    modelPath={modelUrl}
-                    onClose={() => setModelUrl(null)}
-                  />
-                )}
+                </div>
+
+                {/* RIGHT – 80% (Preview only) */}
+                <div className="col-span-8 border border-white/10 rounded-lg overflow-hidden">
+                  {modelUrl ? (
+                    <ModelViewerOBJ
+                      modelPath={modelUrl}
+                      onClose={() => setModelUrl(null)}
+                    />
+                  ) : (
+                    <div className="h-full flex items-center justify-center text-white/40 text-sm">
+                      Select a 3D model to preview
+                    </div>
+                  )}
+                </div>
+
               </div>
             </TabsContent>
 
