@@ -11,13 +11,6 @@ import {
   TabsList,
   TabsTrigger,
 } from "@/components/ui/tabs";
-import {
-  Card,
-  CardContent,
-  CardHeader,
-  CardTitle,
-  CardDescription,
-} from "@/components/ui/card";
 
 import {
   ContactCards,
@@ -115,7 +108,11 @@ export default function DashboardPage() {
 
         setMessages((prev) => [
           ...prev,
-          { id: assistantId, from: "assistant", text: "🧠 Generating report...\n\n" },
+          {
+            id: assistantId,
+            from: "assistant",
+            text: "🧠 Generating report...\n\n",
+          },
         ]);
 
         const reader = reportRes.body!.getReader();
@@ -137,7 +134,7 @@ export default function DashboardPage() {
 
             const msg = JSON.parse(line);
 
-            if (msg.stage === "llama_stream" && msg.chunk) {
+            if (msg.stage === "text_gen_stream" && msg.chunk) {
               fullText += msg.chunk;
 
               setMessages((prev) =>
@@ -164,44 +161,73 @@ export default function DashboardPage() {
   }, []);
 
   return (
-    <main className="min-h-screen bg-[#0b0a0b] flex justify-center p-8 text-white">
-      <div className="w-full flex flex-col">
-        <Tabs defaultValue="chat" onValueChange={() => setModelUrl(null)}>
-          <TabsList className="bg-[#191918] border border-white/10 rounded-lg px-1">
+    <main className="min-h-screen bg-[#0b0a0b] flex justify-center p-6 text-white">
+      <div className="w-full max-w-7xl flex flex-col">
+        <Tabs
+          defaultValue="chat"
+          onValueChange={() => setModelUrl(null)}
+          className="flex flex-col flex-1"
+        >
+          {/* Tabs */}
+          <TabsList className="bg-[#191918] border border-white/10 rounded-xl px-1 py-1 gap-1 self-center">
             {["chat", "incidents", "emergency", "reports", "models"].map((v) => (
-              <TabsTrigger key={v} value={v}>
+              <TabsTrigger
+                key={v}
+                value={v}
+                className="
+                  px-4 py-2 text-sm capitalize rounded-lg transition
+                  text-white/60
+                  data-[state=active]:bg-white
+                  data-[state=active]:text-black
+                "
+              >
                 {v}
               </TabsTrigger>
             ))}
           </TabsList>
 
-          <div className="mt-6 flex-1 w-full border-2 border-dashed border-white/20 p-6">
+          {/* Content frame */}
+          <div className="mt-6 flex-1 w-full rounded-xl border border-white/10 bg-[#0f0e0f] p-6 overflow-hidden">
 
+            {/* CHAT */}
             <TabsContent value="chat" className="h-full flex flex-col">
-              <Conversation messages={messages} className="flex-1" />
-              <ChatInput onSend={handleSend} />
+              <div className="flex-1 overflow-hidden rounded-lg border border-white/10 bg-[#0b0a0b]">
+                <Conversation
+                  messages={messages}
+                  className="h-full p-4 text-sm leading-relaxed whitespace-pre-wrap"
+                />
+              </div>
+
+              <div className="mt-3">
+                <ChatInput onSend={handleSend} />
+              </div>
             </TabsContent>
 
+            {/* EMERGENCY */}
             <TabsContent value="emergency">
               <ContactCards data={contactCardsData} />
             </TabsContent>
 
-            <TabsContent value="models" className="h-full grid grid-cols-10 gap-4">
-              <div className="col-span-2 flex flex-col gap-4">
-                <ModelUploadPanel
-                  files={files}
-                  dragging={dragging}
-                  setDragging={setDragging}
-                  onFiles={handleFiles}
-                  onRemove={removeFile}
-                />
+            {/* MODELS */}
+            <TabsContent value="models" className="h-full grid grid-cols-12 gap-4">
+              {/* Left panel */}
+              <div className="col-span-3 flex flex-col gap-4">
+                <div className="rounded-xl border border-white/10 bg-[#0b0a0b] p-3">
+                  <ModelUploadPanel
+                    files={files}
+                    dragging={dragging}
+                    setDragging={setDragging}
+                    onFiles={handleFiles}
+                    onRemove={removeFile}
+                  />
+                </div>
 
-                <div className="border border-white/10 rounded-lg p-2">
+                <div className="rounded-xl border border-white/10 bg-[#0b0a0b] p-2 space-y-1">
                   {generatedModels.map((m) => (
                     <button
                       key={m}
                       onClick={() => setModelUrl(m)}
-                      className="w-full text-left text-xs hover:bg-white/10"
+                      className="w-full text-left text-xs px-2 py-1 rounded hover:bg-white/10 transition"
                     >
                       {m.split("/").pop()}
                     </button>
@@ -209,15 +235,17 @@ export default function DashboardPage() {
                 </div>
               </div>
 
-              <div className="col-span-8 border border-white/10 rounded-lg">
+              {/* Viewer */}
+              <div className="col-span-9 border border-white/10 rounded-xl bg-black overflow-hidden">
                 {modelUrl ? (
                   <ModelViewerOBJ
                     modelPath={modelUrl}
                     onClose={() => setModelUrl(null)}
                   />
                 ) : (
-                  <div className="h-full flex items-center justify-center text-white/40">
-                    Select model
+                  <div className="h-full flex flex-col items-center justify-center text-white/40 text-sm gap-2">
+                    <span>🧩</span>
+                    <span>Select a 3D model to preview</span>
                   </div>
                 )}
               </div>
