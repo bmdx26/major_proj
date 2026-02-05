@@ -25,9 +25,9 @@ import {
   contactCardsData,
 } from "@/components/contact_cards/ContactCards"
 
-/* 3D viewer (client only) */
-const ModelViewer = dynamic(
-  () => import("@/components/viewers/ModelViewer"),
+/* OBJ 3D viewer (client only) */
+const ModelViewerOBJ = dynamic(
+  () => import("@/components/viewers/ModelViewerOBJ"),
   { ssr: false }
 )
 
@@ -44,11 +44,7 @@ export default function DashboardPage() {
   const handleSend = (text: string) => {
     setMessages((prev) => [
       ...prev,
-      {
-        id: crypto.randomUUID(),
-        from: "user",
-        text,
-      },
+      { id: crypto.randomUUID(), from: "user", text },
     ])
   }
 
@@ -59,15 +55,17 @@ export default function DashboardPage() {
   function handleModelSelect(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0]
     if (!file) return
-
-    const url = URL.createObjectURL(file)
-    setModelUrl(url)
+    setModelUrl(URL.createObjectURL(file))
   }
 
   return (
     <main className="min-h-screen bg-[#0b0a0b] flex justify-center p-8 text-white">
       <div className="w-full flex flex-col">
-        <Tabs defaultValue="chat" className="flex flex-col items-center flex-1">
+        <Tabs
+          defaultValue="chat"
+          onValueChange={() => setModelUrl(null)}
+          className="flex flex-col items-center flex-1"
+        >
           {/* TABS */}
           <TabsList className="bg-[#191918] border border-white/10 rounded-lg px-1">
             {[
@@ -89,6 +87,7 @@ export default function DashboardPage() {
 
           {/* FRAME */}
           <div className="mt-6 flex-1 w-full rounded-xl border-2 border-dashed border-white/20 p-6 overflow-hidden">
+            
             {/* CHAT */}
             <TabsContent value="chat" className="mt-0 h-full flex flex-col">
               <Conversation messages={messages} className="flex-1" />
@@ -132,25 +131,25 @@ export default function DashboardPage() {
               </Card>
             </TabsContent>
 
-            {/* 3D MODELS */}
+            {/* 3D MODELS (OBJ ONLY) */}
             <TabsContent value="models" className="mt-0 h-full">
               <div className="h-full flex flex-col gap-4">
                 {!modelUrl && (
-                  <div className="flex flex-col items-center justify-center h-full gap-4 text-center">
+                  <div className="flex flex-col items-center justify-center h-full gap-4">
                     <p className="text-white/60">
-                      Select a GLB or STL file to preview in 3D
+                      Select a 3D model (OBJ)
                     </p>
 
                     <input
                       ref={fileInputRef}
                       type="file"
-                      accept=".glb,.stl"
+                      accept=".obj"
                       hidden
                       onChange={handleModelSelect}
                     />
 
                     <Button
-                      className="bg-white text-black hover:bg-white/90"
+                      className="bg-white text-black"
                       onClick={() => fileInputRef.current?.click()}
                     >
                       Select 3D File
@@ -159,15 +158,14 @@ export default function DashboardPage() {
                 )}
 
                 {modelUrl && (
-                  <div className="h-full w-full">
-                    <ModelViewer
-                      modelPath={modelUrl}
-                      onClose={() => setModelUrl(null)}
-                    />
-                  </div>
+                  <ModelViewerOBJ
+                    modelPath={modelUrl}
+                    onClose={() => setModelUrl(null)}
+                  />
                 )}
               </div>
             </TabsContent>
+
           </div>
         </Tabs>
       </div>
