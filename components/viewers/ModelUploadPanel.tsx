@@ -16,6 +16,9 @@ type Props = {
   setDragging: (v: boolean) => void;
   onFiles: (files: File[]) => void;
   onRemove: (id: string) => void;
+  projectId: string;
+  setGlobalLoading: (v: boolean) => void;
+  onUploadComplete: () => void;
 };
 
 export default function ModelUploadPanel({
@@ -24,11 +27,53 @@ export default function ModelUploadPanel({
   setDragging,
   onFiles,
   onRemove,
+  projectId,
+  setGlobalLoading,
+  onUploadComplete,
 }: Props) {
-  function handleDrop(e: DragEvent<HTMLDivElement>) {
+  function handleDrop(e: DragEvent<HTMLLabelElement>) {
     e.preventDefault();
     setDragging(false);
     onFiles(Array.from(e.dataTransfer.files));
+  }
+
+  async function handleUpload(e: React.MouseEvent) {
+    e.stopPropagation();
+    if (files.length === 0) return;
+
+    setGlobalLoading(true);
+
+    try {
+      const formData = new FormData();
+      files.forEach((f) => formData.append("images", f.file));
+
+      // 1️⃣ Upload images
+      const uploadRes = await fetch(
+        `${process.env.NEXT_PUBLIC_BACKENED_DOMAIN}/api/projects/${projectId}/odm/upload`,
+        {
+          method: "POST",
+          body: formData,
+        }
+      );
+
+      if (!uploadRes.ok) throw new Error("Upload failed");
+
+      const data = await uploadRes.json();
+      const version = data.odm.version;
+
+
+      // 2️⃣ Start reconstruction
+      await fetch(
+        `${process.env.NEXT_PUBLIC_BACKENED_DOMAIN}/odm/projects/${projectId}/reconstructions/${version}/run`,
+        { method: "POST" }
+      );
+
+      onUploadComplete();
+    } catch (err) {
+      console.error("3D upload failed:", err);
+    } finally {
+      setGlobalLoading(false);
+    }
   }
 
   return (
@@ -44,7 +89,6 @@ export default function ModelUploadPanel({
         dragging ? "border-white bg-white/5" : "border-white/20"
       }`}
     >
-      {/* FILE INPUT */}
       <input
         type="file"
         accept="image/*"
@@ -56,7 +100,6 @@ export default function ModelUploadPanel({
         }
       />
 
-      {/* TOP UPLOAD PROMPT */}
       <div className="flex flex-col items-center gap-2 text-center pointer-events-none">
         <ImageIcon className="h-6 w-6 text-white/70" />
         <p className="text-sm text-white">
@@ -67,7 +110,6 @@ export default function ModelUploadPanel({
         </p>
       </div>
 
-      {/* FILE LIST */}
       <div className="flex-1 mt-4 overflow-auto space-y-2 pointer-events-auto">
         {files.map((item) => (
           <div
@@ -105,15 +147,11 @@ export default function ModelUploadPanel({
         )}
       </div>
 
-      {/* FINAL ACTION BUTTON */}
       <Button
         type="button"
         className="mt-4 bg-white text-black"
         disabled={files.length === 0}
-        onClick={(e) => {
-          e.stopPropagation();
-          console.log("Uploading images:", files);
-        }}
+        onClick={handleUpload}
       >
         <Upload className="h-4 w-4 mr-2" />
         Upload & Generate 3D
