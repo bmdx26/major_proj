@@ -1,10 +1,14 @@
 "use client";
 
 import { useState, useRef, useEffect } from "react";
-import dynamic from "next/dynamic";
+import dynamicImport from "next/dynamic";
 
 import { Conversation } from "@/components/chats/Chats";
 import { ChatInput } from "@/components/chats/ChatInput";
+
+import("html2pdf.js").then((module) => {
+  // dynamic import will work inside client
+});
 
 import {
   Tabs,
@@ -25,7 +29,7 @@ import ModelUploadPanel, {
 import FullscreenLoader from "@/components/ui/FullscreenLoader";
 //import { headers } from "next/headers";
 
-const ModelViewerOBJ = dynamic(
+const ModelViewerOBJ = dynamicImport(
   () => import("@/components/viewers/ModelViewerOBJ"),
   { ssr: false }
 );
@@ -48,6 +52,100 @@ type Reconstruction = {
 
 const AWS_BUCKET = "your-bucket-name";
 const AWS_REGION = "ap-south-1";
+/* ---------------- REPORT FORMATTER ---------------- */
+
+function formatSectionContent(text: string) {
+  if (!text) return "";
+
+  const lines = text.split("\n");
+
+  let html = "";
+  let inOl = false;
+  let inUl = false;
+
+  const closeLists = () => {
+    if (inOl) {
+      html += "</ol>";
+      inOl = false;
+    }
+    if (inUl) {
+      html += "</ul>";
+      inUl = false;
+    }
+  };
+
+  lines.forEach((line) => {
+    const trimmed = line.trim();
+    if (!trimmed) {
+      closeLists();
+      return;
+    }
+
+    // Ordered list
+    if (/^\d+\./.test(trimmed)) {
+      if (!inOl) {
+        closeLists();
+        html += "<ol>";
+        inOl = true;
+      }
+      html += `<li>${trimmed.replace(/^\d+\.\s*/, "")}</li>`;
+    }
+
+    // Unordered list
+    else if (/^[\*\-\+]/.test(trimmed)) {
+      if (!inUl) {
+        closeLists();
+        html += "<ul>";
+        inUl = true;
+      }
+      html += `<li>${trimmed.replace(/^[\*\-\+]\s*/, "")}</li>`;
+    }
+
+    // Normal paragraph
+    else {
+      closeLists();
+      html += `<p>${trimmed}</p>`;
+    }
+  });
+
+  closeLists();
+
+  return html;
+}
+
+function generateReportHTML(rawText: string) {
+  return `
+    <div style="
+      font-family: Arial, sans-serif;
+      padding:40px;
+      line-height:1.6;
+      color:#222;
+    ">
+      <h1 style="
+        text-align:center;
+        color:#b00020;
+        margin-bottom:30px;
+      ">
+        Disaster Incident Report
+      </h1>
+
+      <div style="font-size:14px;">
+        ${formatSectionContent(rawText)}
+      </div>
+
+      <hr style="margin-top:40px;" />
+
+      <p style="
+        font-size:11px;
+        text-align:center;
+        color:#777;
+        margin-top:20px;
+      ">
+        This is a system-generated disaster response report.
+      </p>
+    </div>
+  `;
+}
 
 /* ---------------- PAGE ---------------- */
 
@@ -101,6 +199,7 @@ export default function DashboardPage() {
   }
 
   async function fetchReconstructions(): Promise<boolean> {
+  if (typeof window === 'undefined') return false;
   const projectId = localStorage.getItem("projectId");
   if (!projectId) return false;
 
@@ -130,6 +229,7 @@ export default function DashboardPage() {
 
   /* ---------- EXISTING PIPELINE (UNCHANGED) ---------- */
   useEffect(() => {
+    if (typeof window === 'undefined') return;
     if (hasRun.current) return;
     hasRun.current = true;
 
@@ -153,7 +253,7 @@ export default function DashboardPage() {
 
 
         const reportRes = await fetch(
-          `${process.env.NEXT_PUBLIC_BACKENED_DOMAIN}/projects/${projectId}/report`,
+          `${process.env.NEXT_PUBLIC_BACKENED_DOMAIN}/reports/projects/${projectId}/report`,
           { method: "POST" }
         );
         console.log("Report response:", reportRes);
@@ -198,6 +298,8 @@ export default function DashboardPage() {
             }
           }
         }
+        // After report fully streamed
+        localStorage.setItem("latestReport", fullText);
       } catch {
         setMessages((prev) => [
           ...prev,
@@ -212,6 +314,137 @@ export default function DashboardPage() {
 
     runPipeline();
   }, []);
+
+  async function downloadPDF(reportText: string) {
+    try {
+      const { jsPDF } = await import("jspdf");
+      
+      const doc = new jsPDF({
+        orientation: "portrait",
+        unit: "mm",
+        format: "a4",
+      });
+
+      const pageWidth = doc.internal.pageSize.getWidth();
+      const pageHeight = doc.internal.pageSize.getHeight();
+      const margin = 15;
+      const contentWidth = pageWidth - 2 * margin;
+      let yPosition = margin + 10;
+
+      // Parse the text - handle JSON if present
+      let cleanText = reportText;
+      try {
+        const parsed = JSON.parse(reportText);
+        cleanText = parsed.fullText || parsed.text || reportText;
+      } catch {
+        // Not JSON, use as-is
+      }
+
+      // Convert literal \n to actual newlines and clean up
+      cleanText = cleanText
+        .replace(/\\n/g, "\n")
+        .replace(/\\"/g, '"')
+        .replace(/\*\*/g, "")
+        .trim();
+
+      // Title
+      doc.setFontSize(20);
+      doc.setFont("helvetica", "bold");
+      doc.text("Disaster Incident Report", pageWidth / 2, yPosition, { align: "center" });
+      yPosition += 12;
+
+      // Horizontal line
+      doc.setLineWidth(0.5);
+      doc.line(margin, yPosition, pageWidth - margin, yPosition);
+      yPosition += 10;
+
+      // Process content by sections
+      const sections = cleanText.split(/\n\n+/);
+      
+      for (const section of sections) {
+        const lines = section.split("\n");
+        
+        for (let i = 0; i < lines.length; i++) {
+          let line = lines[i].trim();
+          if (!line) continue;
+
+          // Check if this is a section header (ends with : or contains specific keywords)
+          const isHeader = /^[A-Z][^.]*:$/.test(line) || 
+                          /^(Situation Understanding|Current Disaster Status|Step-by-Step|Immediate Action Plan|Location|Latitude|Longitude)/i.test(line);
+
+          // Check if it's a numbered item
+          const isNumbered = /^\d+\./.test(line);
+
+          // Check for page break needed
+          if (yPosition > pageHeight - margin - 15) {
+            doc.addPage();
+            yPosition = margin;
+          }
+
+          if (isHeader) {
+            yPosition += 4;
+            doc.setFontSize(12);
+            doc.setFont("helvetica", "bold");
+            const wrappedLines = doc.splitTextToSize(line, contentWidth);
+            for (const wl of wrappedLines) {
+              if (yPosition > pageHeight - margin - 10) {
+                doc.addPage();
+                yPosition = margin;
+              }
+              doc.text(wl, margin, yPosition);
+              yPosition += 6;
+            }
+            yPosition += 2;
+          } else if (isNumbered) {
+            doc.setFontSize(10);
+            doc.setFont("helvetica", "normal");
+            const wrappedLines = doc.splitTextToSize(line, contentWidth - 5);
+            for (const wl of wrappedLines) {
+              if (yPosition > pageHeight - margin - 10) {
+                doc.addPage();
+                yPosition = margin;
+              }
+              doc.text(wl, margin + 5, yPosition);
+              yPosition += 5;
+            }
+          } else {
+            doc.setFontSize(10);
+            doc.setFont("helvetica", "normal");
+            const wrappedLines = doc.splitTextToSize(line, contentWidth);
+            for (const wl of wrappedLines) {
+              if (yPosition > pageHeight - margin - 10) {
+                doc.addPage();
+                yPosition = margin;
+              }
+              doc.text(wl, margin, yPosition);
+              yPosition += 5;
+            }
+          }
+        }
+        yPosition += 3; // Space between sections
+      }
+
+      // Footer on each page
+      const pageCount = doc.getNumberOfPages();
+      for (let i = 1; i <= pageCount; i++) {
+        doc.setPage(i);
+        doc.setFontSize(8);
+        doc.setFont("helvetica", "italic");
+        doc.text(
+          `Page ${i} of ${pageCount} | System-generated disaster response report`,
+          pageWidth / 2,
+          pageHeight - 8,
+          { align: "center" }
+        );
+      }
+
+      doc.save("disaster_report.pdf");
+      console.log("PDF saved successfully");
+    } catch (err) {
+      console.error("Error generating PDF:", err);
+      alert("Failed to generate PDF. Check console for details.");
+    }
+  }
 
   useEffect(() => {
     let intervalId: NodeJS.Timeout | null = null;
@@ -280,7 +513,13 @@ export default function DashboardPage() {
                 <Conversation
                   messages={messages}
                   className="h-full p-4 text-sm leading-relaxed whitespace-pre-wrap"
-                />
+                >
+                  {messages.map((msg) => (
+                    <div key={msg.id}>
+                      <strong>{msg.from}:</strong> {msg.text}
+                    </div>
+                  ))}
+                </Conversation>
               </div>
               <div className="mt-3">
                 <ChatInput onSend={handleSend} />
@@ -290,6 +529,21 @@ export default function DashboardPage() {
             {/* EMERGENCY */}
             <TabsContent value="emergency">
               <ContactCards data={contactCardsData} />
+            </TabsContent>
+
+            {/* REPORTS */}
+            <TabsContent value="reports" className="h-full flex flex-col gap-4">
+              <button
+                onClick={() => {
+                  if (typeof window === 'undefined') return;
+                  const report = localStorage.getItem("latestReport");
+                  if (report) downloadPDF(report);
+                  else alert("No report available yet.");
+                }}
+                className="bg-white text-black px-4 py-2 rounded-lg w-fit"
+              >
+                Download Report PDF
+              </button>
             </TabsContent>
 
             {/* MODELS */}
@@ -308,7 +562,7 @@ export default function DashboardPage() {
                     setDragging={setDragging}
                     onFiles={handleFiles}
                     onRemove={removeFile}
-                    projectId={localStorage.getItem("projectId")!}
+                    projectId={typeof window !== 'undefined' ? localStorage.getItem("projectId") || "" : ""}
                     setGlobalLoading={setLoading}
                     onUploadComplete={fetchReconstructions}
                   />
