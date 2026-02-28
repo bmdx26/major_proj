@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, DragEvent } from "react";
-import dynamic from "next/dynamic";
+import dynamicImport from "next/dynamic";
 import { useRouter } from "next/navigation";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -15,7 +15,7 @@ import {
 } from "lucide-react";
 import axios from "axios";
 
-const MapPicker = dynamic(() => import("@/components/MapPicker"), {
+const MapPicker = dynamicImport(() => import("@/components/MapPicker"), {
   ssr: false,
 });
 
