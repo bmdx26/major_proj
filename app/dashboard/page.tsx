@@ -3,9 +3,7 @@
 import { useState, useEffect, useRef } from "react";
 import dynamicImport from "next/dynamic";
 import { ImageIcon, VideoIcon, MusicIcon, Loader2, X } from "lucide-react";
-import dynamic from "next/dynamic";
 import { ChatInput } from "@/components/chats/ChatInput";
-import MapViewer from "@/components/viewers/MapViewer";
 import("html2pdf.js").then((module) => {
   // dynamic import will work inside client
 });
@@ -29,6 +27,11 @@ import ModelUploadPanel, {
 
 const ModelViewerOBJ = dynamicImport(
   () => import("@/components/viewers/ModelViewerOBJ"),
+  { ssr: false }
+);
+
+const MapViewer = dynamicImport(
+  () => import("@/components/viewers/MapViewer"),
   { ssr: false }
 );
 
@@ -254,10 +257,7 @@ export default function DashboardPage() {
   }
   /*-------LOCATION---- */
 
-  const MapViewer = dynamic(
-  () => import("@/components/viewers/MapViewer"),
-  { ssr: false }
-);
+
   /* ---------- MODELS ---------- */
   const [loading, setLoading] = useState(false);
   const [modelUrl, setModelUrl] = useState<string | null>(null);
@@ -1147,7 +1147,7 @@ export default function DashboardPage() {
 
             {/* MAP */}
 <TabsContent value="location" className="h-full">
-  <div className="h-full rounded-xl border border-white/10 bg-[#0b0a0b] overflow-hidden">
+  <div className="rounded-xl border border-white/10 bg-[#0b0a0b] overflow-hidden" style={{ height: "calc(100vh - 180px)" }}>
     <MapViewer />
   </div>
 </TabsContent>

@@ -1,7 +1,10 @@
 "use client";
 
-import "leaflet/dist/leaflet.css";
-import MapViewer from "@/components/viewers/MapViewer";
+import dynamic from "next/dynamic";
+
+const MapViewer = dynamic(() => import("@/components/viewers/MapViewer"), {
+  ssr: false,
+});
 
 export default function LocationPage() {
   return (
