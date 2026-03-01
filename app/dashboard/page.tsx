@@ -1,10 +1,9 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import dynamicImport from "next/dynamic";
 import { ImageIcon, VideoIcon, MusicIcon, Loader2, X } from "lucide-react";
 
-import { Conversation } from "@/components/chats/Chats";
 import { ChatInput } from "@/components/chats/ChatInput";
 
 import("html2pdf.js").then((module) => {
@@ -40,6 +39,7 @@ type ChatMessage = {
   id: string;
   from: "user" | "assistant";
   text: string;
+  timestamp: string;
 };
 
 type Reconstruction = {
@@ -158,12 +158,71 @@ function generateReportHTML(rawText: string) {
 export default function DashboardPage() {
   /* ---------- CHAT ---------- */
   const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [chatMounted, setChatMounted] = useState(false);
+  const [chatLoading, setChatLoading] = useState(false);
+  const chatBottomRef = useRef<HTMLDivElement>(null);
 
-  const handleSend = (text: string) => {
+  // Load persisted history AFTER hydration (avoids SSR mismatch)
+  useEffect(() => {
+    const projectId = localStorage.getItem("projectId");
+    const key = `chatMessages_${projectId ?? "default"}`;
+    try {
+      const saved = localStorage.getItem(key);
+      if (saved) setMessages(JSON.parse(saved) as ChatMessage[]);
+    } catch { /* ignore */ }
+    setChatMounted(true);
+  }, []);
+
+  // Persist only after the load effect has run (skip the initial empty render)
+  useEffect(() => {
+    if (!chatMounted) return;
+    const projectId = localStorage.getItem("projectId");
+    const key = `chatMessages_${projectId ?? "default"}`;
+    try {
+      localStorage.setItem(key, JSON.stringify(messages));
+    } catch { /* quota exceeded — ignore */ }
+  }, [messages, chatMounted]);
+
+  const handleSend = async (text: string) => {
+    const projectId = typeof window !== "undefined" ? localStorage.getItem("projectId") : null;
+    const now = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+
     setMessages((prev) => [
       ...prev,
-      { id: crypto.randomUUID(), from: "user", text },
+      { id: crypto.randomUUID(), from: "user", text, timestamp: now },
     ]);
+    setChatLoading(true);
+
+    try {
+      const res = await fetch(`${process.env.NEXT_PUBLIC_BACKENED_DOMAIN}/chat/${projectId}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ message: text }),
+      });
+      const json = await res.json();
+      const replyText = json.text || json.reply || json.response || "No response";
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: crypto.randomUUID(),
+          from: "assistant",
+          text: replyText,
+          timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+        },
+      ]);
+    } catch {
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: crypto.randomUUID(),
+          from: "assistant",
+          text: "⚠️ Failed to get a response.",
+          timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+        },
+      ]);
+    } finally {
+      setChatLoading(false);
+    }
   };
 
   /* ---------- UPLOAD STATE ---------- */
@@ -353,6 +412,7 @@ export default function DashboardPage() {
           id: assistantId,
           from: "assistant",
           text: "🧠 Generating report...\n\n",
+          timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
         },
       ]);
 
@@ -398,12 +458,18 @@ export default function DashboardPage() {
           id: crypto.randomUUID(),
           from: "assistant",
           text: "⚠️ Failed to generate report.",
+          timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
         },
       ]);
     } finally {
       setReportGenerating(false);
     }
   }
+
+  /* ---------- AUTO-SCROLL CHAT TO BOTTOM ---------- */
+  useEffect(() => {
+    chatBottomRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [messages, chatLoading]);
 
   /* ---------- FETCH REPORT VERSIONS ON MOUNT ---------- */
   useEffect(() => {
@@ -607,20 +673,52 @@ export default function DashboardPage() {
 
             {/* CHAT */}
             <TabsContent value="chat" className="h-full flex flex-col">
-              <div className="flex-1 overflow-hidden rounded-lg border border-white/10 bg-[#0b0a0b]">
-                <Conversation
-                  messages={messages}
-                  className="h-full p-4 text-sm leading-relaxed whitespace-pre-wrap"
-                >
-                  {messages.map((msg) => (
-                    <div key={msg.id}>
-                      <strong>{msg.from}:</strong> {msg.text}
+              {/* Messages area */}
+              <div className="overflow-y-auto rounded-xl border border-white/10 bg-[#0b0a0b] p-4 flex flex-col gap-3" style={{ height: "calc(100vh - 320px)", minHeight: "300px" }}>
+                {messages.length === 0 && !chatLoading && (
+                  <div className="flex-1 flex items-center justify-center text-sm text-white/25 select-none">
+                    Start the conversation…
+                  </div>
+                )}
+
+                {messages.map((msg) => (
+                  <div
+                    key={msg.id}
+                    className={`flex flex-col gap-1 ${
+                      msg.from === "user" ? "items-end" : "items-start"
+                    }`}
+                  >
+                    <div
+                      className={`max-w-[72%] rounded-2xl px-4 py-2.5 text-sm leading-relaxed whitespace-pre-wrap break-words ${
+                        msg.from === "user"
+                          ? "bg-white text-black rounded-br-sm"
+                          : "bg-[#1f1e1f] text-white border border-white/10 rounded-bl-sm"
+                      }`}
+                    >
+                      {msg.text}
                     </div>
-                  ))}
-                </Conversation>
+                    <span className="text-[10px] text-white/30 px-1">{msg.timestamp}</span>
+                  </div>
+                ))}
+
+                {/* Typing indicator */}
+                {chatLoading && (
+                  <div className="flex flex-col items-start gap-1">
+                    <div className="bg-[#1f1e1f] border border-white/10 rounded-2xl rounded-bl-sm px-4 py-3 flex items-center gap-1.5">
+                      <span className="w-1.5 h-1.5 bg-white/50 rounded-full animate-bounce" style={{ animationDelay: "0ms" }} />
+                      <span className="w-1.5 h-1.5 bg-white/50 rounded-full animate-bounce" style={{ animationDelay: "150ms" }} />
+                      <span className="w-1.5 h-1.5 bg-white/50 rounded-full animate-bounce" style={{ animationDelay: "300ms" }} />
+                    </div>
+                    <span className="text-[10px] text-white/30 px-1">Typing…</span>
+                  </div>
+                )}
+
+                <div ref={chatBottomRef} />
               </div>
+
+              {/* Input */}
               <div className="mt-3">
-                <ChatInput onSend={handleSend} />
+                <ChatInput onSend={handleSend} disabled={chatLoading} />
               </div>
             </TabsContent>
 
