@@ -171,7 +171,17 @@ export default function DashboardPage() {
     const key = `chatMessages_${projectId ?? "default"}`;
     try {
       const saved = localStorage.getItem(key);
-      if (saved) setMessages(JSON.parse(saved) as ChatMessage[]);
+      if (saved) {
+        const parsed = JSON.parse(saved) as ChatMessage[];
+        // Filter out old report-like messages stuck in chat history
+        const clean = parsed.filter((m) => {
+          if (m.from !== "assistant") return true;
+          if (m.text.startsWith("{") && m.text.includes("fullText")) return false;
+          if (m.text.length > 2000) return false;
+          return true;
+        });
+        setMessages(clean);
+      }
     } catch { /* ignore */ }
     setChatMounted(true);
   }, []);
@@ -203,7 +213,14 @@ export default function DashboardPage() {
         body: JSON.stringify({ message: text }),
       });
       const json = await res.json();
-      const replyText = json.text || json.reply || json.response || "No response";
+      let replyText = json.text || json.reply || json.response || "No response";
+      // If backend returned JSON-wrapped report, try to extract readable text
+      if (typeof replyText === "string" && replyText.startsWith("{")) {
+        try {
+          const inner = JSON.parse(replyText);
+          replyText = inner.fullText || inner.text || inner.summary || replyText;
+        } catch { /* not JSON, use as-is */ }
+      }
       setMessages((prev) => [
         ...prev,
         {
@@ -722,8 +739,19 @@ export default function DashboardPage() {
               </div>
 
               {/* Input */}
-              <div className="mt-3">
-                <ChatInput onSend={handleSend} disabled={chatLoading} />
+              <div className="mt-3 flex items-center gap-2">
+                <div className="flex-1">
+                  <ChatInput onSend={handleSend} disabled={chatLoading} />
+                </div>
+                {messages.length > 0 && (
+                  <button
+                    onClick={() => setMessages([])}
+                    className="shrink-0 text-xs text-white/30 hover:text-white/60 transition px-2 py-1 rounded-md hover:bg-white/5"
+                    title="Clear chat history"
+                  >
+                    Clear
+                  </button>
+                )}
               </div>
             </TabsContent>
 
