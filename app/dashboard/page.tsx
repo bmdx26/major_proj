@@ -3,9 +3,9 @@
 import { useState, useEffect, useRef } from "react";
 import dynamicImport from "next/dynamic";
 import { ImageIcon, VideoIcon, MusicIcon, Loader2, X } from "lucide-react";
-
+import dynamic from "next/dynamic";
 import { ChatInput } from "@/components/chats/ChatInput";
-
+import MapViewer from "@/components/viewers/MapViewer";
 import("html2pdf.js").then((module) => {
   // dynamic import will work inside client
 });
@@ -252,7 +252,12 @@ export default function DashboardPage() {
   function removeFile(id: string) {
     setFiles((prev) => prev.filter((f) => f.id !== id));
   }
+  /*-------LOCATION---- */
 
+  const MapViewer = dynamic(
+  () => import("@/components/viewers/MapViewer"),
+  { ssr: false }
+);
   /* ---------- MODELS ---------- */
   const [loading, setLoading] = useState(false);
   const [modelUrl, setModelUrl] = useState<string | null>(null);
@@ -653,7 +658,7 @@ export default function DashboardPage() {
           className="flex flex-col flex-1"
         >
           <TabsList className="bg-[#191918] border border-white/10 rounded-xl px-1 py-1 gap-1 self-center">
-            {["chat", "upload more", "emergency", "reports", "models"].map((v) => (
+            {["chat", "upload more", "emergency", "reports", "models","location"].map((v) => (
               <TabsTrigger
                 key={v}
                 value={v}
@@ -1139,6 +1144,15 @@ export default function DashboardPage() {
               </div>
 
             </TabsContent>
+
+            {/* MAP */}
+<TabsContent value="location" className="h-full">
+  <div className="h-full rounded-xl border border-white/10 bg-[#0b0a0b] overflow-hidden">
+    <MapViewer />
+  </div>
+</TabsContent>
+
+
           </div>
         </Tabs>
       </div>
