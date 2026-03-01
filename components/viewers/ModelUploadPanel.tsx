@@ -19,6 +19,7 @@ type Props = {
   projectId: string;
   setGlobalLoading: (v: boolean) => void;
   onUploadComplete: () => void;
+  disabled?: boolean;
 };
 
 export default function ModelUploadPanel({
@@ -30,6 +31,7 @@ export default function ModelUploadPanel({
   projectId,
   setGlobalLoading,
   onUploadComplete,
+  disabled = false,
 }: Props) {
   function handleDrop(e: DragEvent<HTMLLabelElement>) {
     e.preventDefault();
@@ -79,13 +81,16 @@ export default function ModelUploadPanel({
   return (
     <label
       onDragOver={(e) => {
+        if (disabled) return;
         e.preventDefault();
         setDragging(true);
       }}
       onDragLeave={() => setDragging(false)}
-      onDrop={handleDrop}
-      htmlFor="photoUpload"
-      className={`h-full border-2 border-dashed rounded-lg p-4 flex flex-col cursor-pointer ${
+      onDrop={disabled ? undefined : handleDrop}
+      htmlFor={disabled ? undefined : "photoUpload"}
+      className={`h-full border-2 border-dashed rounded-lg p-4 flex flex-col ${
+        disabled ? "cursor-not-allowed opacity-50" : "cursor-pointer"
+      } ${
         dragging ? "border-white bg-white/5" : "border-white/20"
       }`}
     >
@@ -95,6 +100,7 @@ export default function ModelUploadPanel({
         multiple
         hidden
         id="photoUpload"
+        disabled={disabled}
         onChange={(e) =>
           onFiles(e.target.files ? Array.from(e.target.files) : [])
         }
@@ -150,7 +156,7 @@ export default function ModelUploadPanel({
       <Button
         type="button"
         className="mt-4 bg-white text-black"
-        disabled={files.length === 0}
+        disabled={disabled || files.length === 0}
         onClick={handleUpload}
       >
         <Upload className="h-4 w-4 mr-2" />
