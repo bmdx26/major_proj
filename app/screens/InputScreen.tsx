@@ -118,6 +118,8 @@ export default function InputScreen() {
       );
       console.log("Post created:", response.data);
       localStorage.setItem("projectId", response.data.id);
+      localStorage.setItem("projectLat", String(latitude));
+      localStorage.setItem("projectLng", String(longitude));
       // move to step 2 only after successful POST
       setStep(2);
     } catch (error) {
@@ -164,6 +166,21 @@ export default function InputScreen() {
 
     const data = await response.json();
     console.log("Files uploaded:", data);
+
+    // Run pipeline after successful upload
+    try {
+      await fetch(
+        `${process.env.NEXT_PUBLIC_BACKENED_DOMAIN}/projects/${projectId}/analyze`,
+        { method: "POST" }
+      );
+      await fetch(
+        `${process.env.NEXT_PUBLIC_BACKENED_DOMAIN}/projects/${projectId}/event-summary`,
+        { method: "POST" }
+      );
+      console.log("Pipeline completed after upload");
+    } catch (pipelineErr) {
+      console.error("Pipeline failed:", pipelineErr);
+    }
 
     router.push("/dashboard");
   } catch (error) {

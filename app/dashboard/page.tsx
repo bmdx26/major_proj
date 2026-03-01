@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, useEffect } from "react";
+import { useState, useEffect } from "react";
 import dynamicImport from "next/dynamic";
 import { ImageIcon, VideoIcon, MusicIcon, Loader2, X } from "lucide-react";
 
@@ -20,14 +20,12 @@ import {
 
 import {
   ContactCards,
-  contactCardsData,
 } from "@/components/contact_cards/ContactCards";
 
 import ModelUploadPanel, {
   UploadItem,
 } from "@/components/viewers/ModelUploadPanel";
 
-import FullscreenLoader from "@/components/ui/FullscreenLoader";
 //import { headers } from "next/headers";
 
 const ModelViewerOBJ = dynamicImport(
@@ -50,7 +48,8 @@ type Reconstruction = {
 };
 
 type ReportVersion = {
-  reportId: string;
+  id: string;
+  projectId: string;
   version: number;
   content: string;
 };
@@ -159,7 +158,6 @@ function generateReportHTML(rawText: string) {
 export default function DashboardPage() {
   /* ---------- CHAT ---------- */
   const [messages, setMessages] = useState<ChatMessage[]>([]);
-  const hasRun = useRef(false);
 
   const handleSend = (text: string) => {
     setMessages((prev) => [
@@ -321,12 +319,13 @@ export default function DashboardPage() {
         { headers: { "ngrok-skip-browser-warning": "true" } }
       );
       if (!res.ok) return;
-      const data: ReportVersion[] = await res.json();
-      const sorted = [...data].sort((a, b) => b.version - a.version);
-      setReportVersions(sorted);
-      // Auto-select the latest version if none selected
-      if (sorted.length > 0) {
-        setSelectedReport((prev) => prev ?? sorted[0]);
+      const json: { success: boolean; count: number; data: ReportVersion[] } = await res.json();
+      const rdata = json.data ?? [];
+      console.log("Fetched report versions:", rdata);
+      setReportVersions(rdata);
+      // Auto-select the latest version (first in descending order) if none selected
+      if (rdata.length > 0) {
+        setSelectedReport((prev) => prev ?? rdata[0]);
       }
     } catch (err) {
       console.error("Failed to fetch report versions:", err);
@@ -386,6 +385,7 @@ export default function DashboardPage() {
       }
       // After report fully streamed
       localStorage.setItem("latestReport", fullText);
+      console.log("Report response:", reportRes);
       setMessages((prev) => prev.map((m) =>
         m.id === assistantId ? { ...m, text: fullText } : m
       ));
@@ -411,42 +411,7 @@ export default function DashboardPage() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  /* ---------- EXISTING PIPELINE (UNCHANGED) ---------- */
-  useEffect(() => {
-    if (typeof window === 'undefined') return;
-    if (hasRun.current) return;
-    hasRun.current = true;
 
-    const projectId = localStorage.getItem("projectId");
-    if (!projectId) return;
-
-    const runPipeline = async () => {
-      try {
-        const analyzeRes = await fetch(
-          `${process.env.NEXT_PUBLIC_BACKENED_DOMAIN}/projects/${projectId}/analyze`,
-          { method: "POST" }
-        );
-        console.log("Analyze response:", analyzeRes);
-
-        const eventSummaryRes = await fetch(
-          `${process.env.NEXT_PUBLIC_BACKENED_DOMAIN}/projects/${projectId}/event-summary`,
-          { method: "POST" }
-        );
-        console.log("Event summary response:", eventSummaryRes);
-      } catch {
-        setMessages((prev) => [
-          ...prev,
-          {
-            id: crypto.randomUUID(),
-            from: "assistant",
-            text: "⚠️ Failed to run pipeline.",
-          },
-        ]);
-      }
-    };
-
-    runPipeline();
-  }, []);
 
   async function downloadPDF(reportText: string) {
     try {
@@ -726,8 +691,8 @@ export default function DashboardPage() {
             </TabsContent>
 
             {/* EMERGENCY */}
-            <TabsContent value="emergency">
-              <ContactCards data={contactCardsData} />
+            <TabsContent value="emergency" className="h-full overflow-auto">
+              <ContactCards />
             </TabsContent>
 
             {/* REPORTS */}
@@ -770,9 +735,9 @@ export default function DashboardPage() {
                     ) : (
                       reportVersions.map((report) => (
                         <div
-                          key={report.reportId}
+                          key={report.id}
                           className={`p-2 rounded-lg border transition cursor-pointer ${
-                            selectedReport?.reportId === report.reportId
+                            selectedReport?.id === report.id
                               ? "border-white/40 bg-white/10"
                               : "border-white/10 bg-[#191918] hover:bg-white/5"
                           }`}
@@ -1017,10 +982,6 @@ export default function DashboardPage() {
             {/* MODELS */}
             <TabsContent value="models" className="h-full grid grid-cols-12 gap-4">
 
-              {loading && (
-                <FullscreenLoader text="Processing 3D reconstruction…" />
-              )}
-
               {/* LEFT */}
               <div className="col-span-3 flex flex-col gap-4">
                 <div className="rounded-xl border border-white/10 bg-[#0b0a0b] p-3">
@@ -1033,6 +994,7 @@ export default function DashboardPage() {
                     projectId={typeof window !== 'undefined' ? localStorage.getItem("projectId") || "" : ""}
                     setGlobalLoading={setLoading}
                     onUploadComplete={fetchReconstructions}
+                    disabled={loading}
                   />
                 </div>
 
@@ -1058,7 +1020,13 @@ export default function DashboardPage() {
               </div>
 
               {/* RIGHT */}
-              <div className="col-span-9 border border-white/10 rounded-xl bg-black overflow-hidden">
+              <div className="relative col-span-9 border border-white/10 rounded-xl bg-black overflow-hidden">
+                {loading && (
+                  <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-3 bg-black/70 rounded-xl">
+                    <Loader2 className="h-8 w-8 animate-spin text-white" />
+                    <p className="text-sm text-white/80">Processing 3D reconstruction…</p>
+                  </div>
+                )}
                 {modelUrl ? (
                   <ModelViewerOBJ
                     modelPath={modelUrl}
