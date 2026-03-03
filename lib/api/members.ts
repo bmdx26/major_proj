@@ -1,4 +1,5 @@
 import { getAuthHeaders } from "@/lib/utils";
+import axios from "axios";
 
 const API = process.env.NEXT_PUBLIC_BACKEND_DOMAIN;
 
@@ -10,8 +11,10 @@ export type ProjectMember = {
   id: string;
   userId: string;
   userName: string;
+  userEmail: string;
   userDesignation: string;
   role: MemberRole;
+  status: string;
 };
 
 /* ─────────── API FUNCTIONS ─────────── */
@@ -21,11 +24,21 @@ export async function fetchProjectMembers(
   projectId: string
 ): Promise<ProjectMember[]> {
   try {
-    const res = await fetch(`${API}/projects/${projectId}/members`, {
-      headers: { ...getAuthHeaders() },
+    const res = await axios.get(`${API}/projects/${projectId}/members`, {
+      headers: { "ngrok-skip-browser-warning": "true", ...getAuthHeaders() },
     });
-    if (!res.ok) return [];
-    return await res.json();
+    const raw = res.data;
+    console.log("fetchProjectMembers raw:", raw);
+    const list = Array.isArray(raw) ? raw : raw.members ?? raw.data ?? [];
+    return list.map((m: { id: string; name: string; email: string; designation: string; role: string; status: string }) => ({
+      id: m.id,
+      userId: m.id,
+      userName: m.name,
+      userEmail: m.email,
+      userDesignation: m.designation,
+      role: m.role.toLowerCase() as MemberRole,
+      status: m.status,
+    }));
   } catch {
     return [];
   }
@@ -74,7 +87,7 @@ export async function fetchMyRole(
 ): Promise<MemberRole> {
   try {
     const res = await fetch(`${API}/projects/${projectId}/my-role`, {
-      headers: { ...getAuthHeaders() },
+      headers: { "ngrok-skip-browser-warning": "true", ...getAuthHeaders() },
     });
     if (!res.ok) return "member";
     const data = await res.json();

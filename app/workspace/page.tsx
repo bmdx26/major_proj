@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, use } from "react";
 import dynamicImport from "next/dynamic";
 import { ImageIcon, VideoIcon, MusicIcon, Loader2, X, CheckCircle2, XCircle, ArrowUpDown, UserMinus } from "lucide-react";
 import { ChatInput } from "@/components/chats/ChatInput";
@@ -8,6 +8,7 @@ import { useWorkspace } from "@/components/workspace/WorkspaceContext";
 import {
   fetchProjectMembers,
   fetchMyRole,
+  fetchMyRoleInfo,
   changeRole,
   removeMember,
   fetchIncomingRequests,
@@ -27,6 +28,7 @@ import type {
   IncomingRequest,
   ReportVersion,
   Reconstruction,
+  MyRoleInfo,
 } from "@/lib/api";
 import("html2pdf.js").then((module) => {
   // dynamic import will work inside client
@@ -72,20 +74,27 @@ const AWS_REGION = "ap-south-1";
 function MembersPanel() {
   const [members, setMembers] = useState<ProjectMember[]>([]);
   const [myRole, setMyRole] = useState<MemberRole>("member");
+  const [roleInfo, setRoleInfo] = useState<MyRoleInfo | null>(null);
   const [loading, setLoading] = useState(true);
   const [actioning, setActioning] = useState<string | null>(null);
+
+ 
+
+
 
   useEffect(() => {
     const projectId = localStorage.getItem("projectId");
     if (!projectId) { setLoading(false); return; }
     (async () => {
       setLoading(true);
-      const [membersList, role] = await Promise.all([
+      const [membersList, role, info] = await Promise.all([
         fetchProjectMembers(projectId),
         fetchMyRole(projectId),
+        fetchMyRoleInfo(projectId),
       ]);
       setMembers(membersList);
       setMyRole(role);
+      setRoleInfo(info);
       setLoading(false);
     })();
   }, []);
@@ -98,6 +107,12 @@ function MembersPanel() {
    */
   function canChangeRole(target: ProjectMember): MemberRole | null {
     if (target.role === "creator") return null; // nobody can change the creator
+    // Use permissions from /projects/:projectId/me when available
+    if (roleInfo?.permissions) {
+      if (!roleInfo.permissions.canPromoteMembers) return null;
+      return target.role === "member" ? "coordinator" : "member";
+    }
+    // Fallback to old logic
     if (myRole === "creator") {
       return target.role === "member" ? "coordinator" : "member";
     }
@@ -109,6 +124,11 @@ function MembersPanel() {
 
   function canRemove(target: ProjectMember): boolean {
     if (target.role === "creator") return false;
+    // Use permissions from /projects/:projectId/me when available
+    if (roleInfo?.permissions) {
+      return roleInfo.permissions.canApproveMembers;
+    }
+    // Fallback to old logic
     if (myRole === "creator") return true;
     if (myRole === "coordinator" && target.role === "member") return true;
     return false;
@@ -284,14 +304,14 @@ function RequestsPanel() {
     })();
   }, []);
 
-  async function handleAccept(requestId: string) {
+  async function handleAccept(reqId: string, userId: string) {
     const projectId = localStorage.getItem("projectId");
     if (!projectId) return;
-    setActioning(requestId);
-    const ok = await acceptRequest(projectId, requestId);
+    setActioning(reqId);
+    const ok = await acceptRequest(projectId, userId);
     if (ok) {
       setRequests((prev) =>
-        prev.map((r) => (r.id === requestId ? { ...r, status: "accepted" as const } : r))
+        prev.map((r) => (r.id === reqId ? { ...r, status: "accepted" as const } : r))
       );
     } else {
       alert("Failed to accept request.");
@@ -299,14 +319,14 @@ function RequestsPanel() {
     setActioning(null);
   }
 
-  async function handleReject(requestId: string) {
+  async function handleReject(reqId: string, userId: string) {
     const projectId = localStorage.getItem("projectId");
     if (!projectId) return;
-    setActioning(requestId);
-    const ok = await rejectRequest(projectId, requestId);
+    setActioning(reqId);
+    const ok = await rejectRequest(projectId, userId);
     if (ok) {
       setRequests((prev) =>
-        prev.map((r) => (r.id === requestId ? { ...r, status: "rejected" as const } : r))
+        prev.map((r) => (r.id === reqId ? { ...r, status: "rejected" as const } : r))
       );
     } else {
       alert("Failed to reject request.");
@@ -358,7 +378,7 @@ function RequestsPanel() {
                 {req.status === "pending" ? (
                   <>
                     <button
-                      onClick={() => handleAccept(req.id)}
+                      onClick={() => handleAccept(req.id, req.userId)}
                       disabled={actioning === req.id}
                       className="flex items-center gap-1 rounded-md bg-green-500/15 border border-green-500/20 px-3 py-1.5 text-xs font-medium text-green-400 hover:bg-green-500/25 transition disabled:opacity-40"
                     >
@@ -370,7 +390,7 @@ function RequestsPanel() {
                       Accept
                     </button>
                     <button
-                      onClick={() => handleReject(req.id)}
+                      onClick={() => handleReject(req.id, req.userId)}
                       disabled={actioning === req.id}
                       className="flex items-center gap-1 rounded-md bg-red-500/15 border border-red-500/20 px-3 py-1.5 text-xs font-medium text-red-400 hover:bg-red-500/25 transition disabled:opacity-40"
                     >

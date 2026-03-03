@@ -1,7 +1,7 @@
 import { getAuthHeaders } from "@/lib/utils";
 import axios from "axios";
 
-const API = process.env.NEXT_PUBLIC_BACKENED_DOMAIN;
+const API = process.env.NEXT_PUBLIC_BACKEND_DOMAIN;
 
 /* ─────────── TYPES ─────────── */
 
@@ -14,6 +14,14 @@ export type Project = {
 export type JoinedProject = {
   id: string;
   title: string;
+  role: string;
+};
+
+/** Raw item returned by GET /projects/my */
+type ProjectItem = {
+  id: string;
+  title: string;
+  createdAt: string;
   role: string;
 };
 
@@ -32,34 +40,46 @@ export type CreateProjectPayload = {
 
 /* ─────────── API FUNCTIONS ─────────── */
 
-/** GET /projects/my */
-export async function fetchMyProjects(): Promise<Project[]> {
+/** Shared helper — GET /projects/my (returns all projects with role) */
+async function fetchAllProjects(): Promise<ProjectItem[]> {
   try {
-    const res = await fetch(`${API}/projects/projects/my`, {
-        method: "GET",
-      headers: { ...getAuthHeaders() },
+    const res = await axios.get(`${API}/projects/my`, {
+        
+      headers: { 
+        "ngrok-skip-browser-warning": "true",
+        ...getAuthHeaders() },
     });
-    if (!res.ok) return [];
-    console.log("fetchMyProjects response:", res);
-    return await res.json();
+    const raw = res.data;
+    console.log("fetchAllProjects raw:", JSON.stringify(raw, null, 2));
+
+    // Normalise: backend may return an array directly, or wrap it
+    if (Array.isArray(raw)) return raw;
+    if (Array.isArray(raw.projects)) return raw.projects;
+    if (Array.isArray(raw.data)) return raw.data;
+    console.warn("fetchAllProjects: unexpected shape", raw);
+    return [];
   } catch {
     return [];
   }
 }
 
-/** GET /projects/joined */
+/** Projects where the current user is the creator */
+export async function fetchMyProjects(): Promise<Project[]> {
+  const all = await fetchAllProjects();
+  return all
+    .filter((p) => p.role.toUpperCase() === "CREATOR")
+    .map(({ id, title, createdAt }) => ({ id, title, createdAt }));
+}
+
+/** Projects where the current user is a coordinator or member */
 export async function fetchJoinedProjects(): Promise<JoinedProject[]> {
-  try {
-    const res = await fetch(`${API}/projects/joined`, {
-      method: "GET",
-      headers: { ...getAuthHeaders() },
-    });
-    if (!res.ok) return [];
-    console.log("fetchJoinedProjects response:", res);
-    return await res.json();
-  } catch {
-    return [];
-  }
+  const all = await fetchAllProjects();
+  return all
+    .filter((p) => {
+      const r = p.role.toUpperCase();
+      return r === "COORDINATOR" || r === "MEMBER";
+    })
+    .map(({ id, title, role }) => ({ id, title, role }));
 }
 
 /** GET /projects/search?q=<query> */
@@ -70,7 +90,7 @@ export async function searchProjects(
   try {
     const res = await fetch(
       `${API}/projects/search?q=${encodeURIComponent(query)}`,
-      { headers: { ...getAuthHeaders() } }
+      { headers: { "ngrok-skip-browser-warning": "true", ...getAuthHeaders() } }
     );
     if (!res.ok) return [];
     console.log("searchProjects response:", res);
@@ -105,7 +125,7 @@ export async function fetchProjectDetails(
   // PLACEHOLDER: Expected response: { id, title, location, disasterType, status, createdAt, ... }
   try {
     const res = await fetch(`${API}/projects/${projectId}`, {
-      headers: { ...getAuthHeaders() },
+      headers: { "ngrok-skip-browser-warning": "true", ...getAuthHeaders() },
     });
     if (!res.ok) return null;
     return await res.json();
@@ -122,7 +142,7 @@ export async function fetchEventSummary(
   // PLACEHOLDER: Expected response: { summary, timeline, affectedArea, ... }
   try {
     const res = await fetch(`${API}/projects/${projectId}/event-summary`, {
-      headers: { ...getAuthHeaders() },
+      headers: { "ngrok-skip-browser-warning": "true", ...getAuthHeaders() },
     });
     if (!res.ok) return null;
     return await res.json();
@@ -137,7 +157,7 @@ export async function fetchProjectMedia(projectId: string): Promise<any[]> {
   // PLACEHOLDER: Expected response: [{ id, filename, type, url, uploadedAt }, ...]
   try {
     const res = await fetch(`${API}/projects/${projectId}/media`, {
-      headers: { ...getAuthHeaders() },
+      headers: { "ngrok-skip-browser-warning": "true", ...getAuthHeaders() },
     });
     if (!res.ok) return [];
     return await res.json();

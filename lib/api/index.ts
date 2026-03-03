@@ -12,3 +12,4 @@ export * from "./reconstructions";
 export * from "./chat";
 export * from "./emergency";
 export * from "./user";
+export * from "./role";
