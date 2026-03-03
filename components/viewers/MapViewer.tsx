@@ -8,6 +8,7 @@ import {
   useMap,
 } from "react-leaflet";
 import L from "leaflet";
+import { getAuthHeaders } from "@/lib/utils";
 import { useEffect, useMemo, useState } from "react";
 import "leaflet/dist/leaflet.css";
 import { Loader2, Phone, Mail, MapPin, Building2, ShieldAlert, Flame, HeartPulse } from "lucide-react";
@@ -141,7 +142,7 @@ export default function MapViewer() {
     setCenter([parseFloat(lat), parseFloat(lng)]);
     setDisasterPos({ lat: parseFloat(lat), lng: parseFloat(lng) });
 
-    fetch(`/api/emergency?lat=${lat}&lng=${lng}`)
+    fetch(`/api/emergency?lat=${lat}&lng=${lng}`, { headers: { ...getAuthHeaders() } })
       .then((r) => { if (!r.ok) throw new Error(); return r.json(); })
       .then((data) => {
         setLocality(data.locality ?? "");

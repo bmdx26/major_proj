@@ -3,6 +3,12 @@
 import { useState, DragEvent } from "react";
 import dynamicImport from "next/dynamic";
 import { useRouter } from "next/navigation";
+import {
+  createProject,
+  uploadProjectFiles,
+  runAnalyzePipeline,
+  runEventSummaryPipeline,
+} from "@/lib/api";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
@@ -13,7 +19,6 @@ import {
   Loader2,
   X,
 } from "lucide-react";
-import axios from "axios";
 
 const MapPicker = dynamicImport(() => import("@/components/MapPicker"), {
   ssr: false,
@@ -88,7 +93,7 @@ export default function InputScreen() {
     setSubmitting(true);
 
     setTimeout(() => {
-      router.push("/dashboard");
+      router.push("/workspace");
     }, 3500);
   }
 
@@ -99,25 +104,21 @@ export default function InputScreen() {
         return;
       }
 
-      const payload = {
+      const result = await createProject({
         title,
         location: place,
         latitude,
         longitude,
         disasterType,
-      };
+      });
 
-      const response = await axios.post(
-        `${process.env.NEXT_PUBLIC_BACKENED_DOMAIN}/projects/`,
-        payload,
-        {
-          headers: {
-            "Content-Type": "application/json",
-          },
-        }
-      );
-      console.log("Post created:", response.data);
-      localStorage.setItem("projectId", response.data.id);
+      if (!result) {
+        alert("Failed to create post. Please try again.");
+        return;
+      }
+
+      console.log("Post created:", result);
+      localStorage.setItem("projectId", result.id);
       localStorage.setItem("projectLat", String(latitude));
       localStorage.setItem("projectLng", String(longitude));
       // move to step 2 only after successful POST
@@ -152,37 +153,21 @@ export default function InputScreen() {
   try {
     setSubmitting(true);
 
-    const response = await fetch(
-      `${process.env.NEXT_PUBLIC_BACKENED_DOMAIN}/projects/${projectId}/upload`,
-      {
-        method: "POST",
-        body: formData,
-      }
-    );
+    const ok = await uploadProjectFiles(projectId, formData);
+    if (!ok) throw new Error("File upload failed");
 
-    if (!response.ok) {
-      throw new Error("File upload failed");
-    }
-
-    const data = await response.json();
-    console.log("Files uploaded:", data);
+    console.log("Files uploaded successfully");
 
     // Run pipeline after successful upload
     try {
-      await fetch(
-        `${process.env.NEXT_PUBLIC_BACKENED_DOMAIN}/projects/${projectId}/analyze`,
-        { method: "POST" }
-      );
-      await fetch(
-        `${process.env.NEXT_PUBLIC_BACKENED_DOMAIN}/projects/${projectId}/event-summary`,
-        { method: "POST" }
-      );
+      await runAnalyzePipeline(projectId);
+      await runEventSummaryPipeline(projectId);
       console.log("Pipeline completed after upload");
     } catch (pipelineErr) {
       console.error("Pipeline failed:", pipelineErr);
     }
 
-    router.push("/dashboard");
+    router.push("/workspace");
   } catch (error) {
     console.error("Upload error:", error);
     alert("Failed to upload files");
