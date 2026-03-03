@@ -1,6 +1,6 @@
 import { getAuthHeaders } from "@/lib/utils";
 
-const API = process.env.NEXT_PUBLIC_BACKENED_DOMAIN;
+const API = process.env.NEXT_PUBLIC_BACKEND_DOMAIN;
 
 /* ─────────── TYPES ─────────── */
 

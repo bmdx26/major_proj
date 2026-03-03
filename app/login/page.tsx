@@ -44,7 +44,7 @@ export default function LoginPage() {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
 
-  const BACKEND_URL = process.env.NEXT_PUBLIC_BACKENED_DOMAIN;
+  const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_DOMAIN;
 
   /* ── Google OAuth: redirect to backend ── */
   function handleGoogleSignIn() {
