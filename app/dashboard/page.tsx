@@ -1,1189 +1,495 @@
 "use client";
 
-import { useState, useEffect, useRef } from "react";
-import dynamicImport from "next/dynamic";
-import { ImageIcon, VideoIcon, MusicIcon, Loader2, X } from "lucide-react";
-import { ChatInput } from "@/components/chats/ChatInput";
-import("html2pdf.js").then((module) => {
-  // dynamic import will work inside client
-});
-
+import { useState, useEffect, useMemo } from "react";
+import { useRouter } from "next/navigation";
 import {
-  Tabs,
-  TabsContent,
-  TabsList,
-  TabsTrigger,
-} from "@/components/ui/tabs";
-
+  Search,
+  Plus,
+  Filter,
+  UserCircle,
+  Clock,
+  CheckCircle2,
+  XCircle,
+  X,
+  Loader2,
+  FolderOpen,
+  Users,
+  Send,
+} from "lucide-react";
 import {
-  ContactCards,
-} from "@/components/contact_cards/ContactCards";
+  fetchMyProjects,
+  fetchJoinedProjects,
+  fetchMyRequests,
+  searchProjects,
+  sendJoinRequest,
+  cancelJoinRequest,
+} from "@/lib/api";
+import type {
+  Project,
+  JoinedProject,
+  JoinRequest,
+  SearchResult,
+} from "@/lib/api";
 
-import ModelUploadPanel, {
-  UploadItem,
-} from "@/components/viewers/ModelUploadPanel";
+/* ──────────────── STATUS BADGE ──────────────── */
 
-//import { headers } from "next/headers";
+function StatusBadge({ status }: { status: JoinRequest["status"] }) {
+  const config = {
+    pending: {
+      icon: Clock,
+      label: "Pending",
+      cls: "bg-yellow-500/15 text-yellow-400 border-yellow-500/20",
+    },
+    accepted: {
+      icon: CheckCircle2,
+      label: "Accepted",
+      cls: "bg-green-500/15 text-green-400 border-green-500/20",
+    },
+    rejected: {
+      icon: XCircle,
+      label: "Rejected",
+      cls: "bg-red-500/15 text-red-400 border-red-500/20",
+    },
+  }[status];
 
-const ModelViewerOBJ = dynamicImport(
-  () => import("@/components/viewers/ModelViewerOBJ"),
-  { ssr: false }
-);
+  const Icon = config.icon;
 
-const MapViewer = dynamicImport(
-  () => import("@/components/viewers/MapViewer"),
-  { ssr: false }
-);
+  return (
+    <span
+      className={`inline-flex items-center gap-1 rounded-full border px-2.5 py-0.5 text-[11px] font-medium ${config.cls}`}
+    >
+      <Icon className="h-3 w-3" />
+      {config.label}
+    </span>
+  );
+}
 
+/* ──────────── SECTION FILTER INPUT ──────────── */
 
-/* ---------------- TYPES ---------------- */
+function SectionFilter({
+  value,
+  onChange,
+  open,
+  onToggle,
+}: {
+  value: string;
+  onChange: (v: string) => void;
+  open: boolean;
+  onToggle: () => void;
+}) {
+  return (
+    <div className="flex items-center gap-2">
+      {open && (
+        <input
+          autoFocus
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          placeholder="Filter…"
+          className="h-7 w-36 rounded-md border border-white/10 bg-[#191918] px-2 text-xs text-white placeholder:text-white/30 outline-none focus:border-white/20"
+        />
+      )}
+      <button
+        onClick={onToggle}
+        className="p-1 rounded-md text-white/40 hover:text-white hover:bg-white/5 transition"
+        title="Filter"
+      >
+        <Filter className="h-3.5 w-3.5" />
+      </button>
+    </div>
+  );
+}
 
-type ChatMessage = {
-  id: string;
-  from: "user" | "assistant";
-  text: string;
-  timestamp: string;
-};
+/* ─────────────────── PAGE ─────────────────── */
 
-type Reconstruction = {
-  version: number;
-  outputS3Prefix: string;
-};
+export default function DashboardPage() {
+  const router = useRouter();
 
-type ReportVersion = {
-  id: string;
-  projectId: string;
-  version: number;
-  content: string;
-};
+  /* ── User info ── */
+  const [userName, setUserName] = useState("");
+  const [userDesignation, setUserDesignation] = useState("");
 
-/* ---------------- AWS CONFIG ---------------- */
+  /* ── Data ── */
+  const [myProjects, setMyProjects] = useState<Project[]>([]);
+  const [joinedProjects, setJoinedProjects] = useState<JoinedProject[]>([]);
+  const [myRequests, setMyRequests] = useState<JoinRequest[]>([]);
+  const [loading, setLoading] = useState(true);
 
-const AWS_BUCKET = "your-bucket-name";
-const AWS_REGION = "ap-south-1";
-/* ---------------- REPORT FORMATTER ---------------- */
+  /* ── Search ── */
+  const [searchQuery, setSearchQuery] = useState("");
+  const [searchResults, setSearchResults] = useState<SearchResult[]>([]);
+  const [searching, setSearching] = useState(false);
+  const [selectedSearchProject, setSelectedSearchProject] = useState<SearchResult | null>(null);
+  const [joining, setJoining] = useState(false);
 
-function formatSectionContent(text: string) {
-  if (!text) return "";
+  /* ── Section filters ── */
+  const [filterMyOpen, setFilterMyOpen] = useState(false);
+  const [filterMyQuery, setFilterMyQuery] = useState("");
 
-  const lines = text.split("\n");
+  const [filterJoinedOpen, setFilterJoinedOpen] = useState(false);
+  const [filterJoinedQuery, setFilterJoinedQuery] = useState("");
 
-  let html = "";
-  let inOl = false;
-  let inUl = false;
+  const [filterReqOpen, setFilterReqOpen] = useState(false);
+  const [filterReqQuery, setFilterReqQuery] = useState("");
 
-  const closeLists = () => {
-    if (inOl) {
-      html += "</ol>";
-      inOl = false;
+  /* ── Cancelling request ── */
+  const [cancellingId, setCancellingId] = useState<string | null>(null);
+
+  /* ────── LOAD DATA ON MOUNT ────── */
+
+  useEffect(() => {
+    setUserName(localStorage.getItem("userName") || "User");
+    setUserDesignation(localStorage.getItem("userDesignation") || "Member");
+
+    async function load() {
+      setLoading(true);
+      const [projects, joined, requests] = await Promise.all([
+        fetchMyProjects(),
+        fetchJoinedProjects(),
+        fetchMyRequests(),
+      ]);
+      setMyProjects(projects);
+      setJoinedProjects(joined);
+      setMyRequests(requests);
+      setLoading(false);
     }
-    if (inUl) {
-      html += "</ul>";
-      inUl = false;
-    }
-  };
+    load();
+  }, []);
 
-  lines.forEach((line) => {
-    const trimmed = line.trim();
-    if (!trimmed) {
-      closeLists();
+  /* ────── SEARCH DEBOUNCE ────── */
+
+  useEffect(() => {
+    if (!searchQuery.trim()) {
+      setSearchResults([]);
+      setSelectedSearchProject(null);
       return;
     }
 
-    // Ordered list
-    if (/^\d+\./.test(trimmed)) {
-      if (!inOl) {
-        closeLists();
-        html += "<ol>";
-        inOl = true;
-      }
-      html += `<li>${trimmed.replace(/^\d+\.\s*/, "")}</li>`;
+    const timeout = setTimeout(async () => {
+      setSearching(true);
+      const results = await searchProjects(searchQuery);
+      setSearchResults(results);
+      setSearching(false);
+    }, 400);
+
+    return () => clearTimeout(timeout);
+  }, [searchQuery]);
+
+  /* ────── ACTIONS ────── */
+
+  function handleOpenProject(projectId: string) {
+    localStorage.setItem("projectId", projectId);
+    router.push("/workspace");
+  }
+
+  async function handleJoinProject() {
+    if (!selectedSearchProject) return;
+    setJoining(true);
+    const ok = await sendJoinRequest(selectedSearchProject.id);
+    if (ok) {
+      // Refresh requests list
+      const requests = await fetchMyRequests();
+      setMyRequests(requests);
+      setSearchQuery("");
+      setSearchResults([]);
+      setSelectedSearchProject(null);
+    } else {
+      alert("Failed to send join request.");
     }
+    setJoining(false);
+  }
 
-    // Unordered list
-    else if (/^[\*\-\+]/.test(trimmed)) {
-      if (!inUl) {
-        closeLists();
-        html += "<ul>";
-        inUl = true;
-      }
-      html += `<li>${trimmed.replace(/^[\*\-\+]\s*/, "")}</li>`;
+  async function handleCancelRequest(requestId: string) {
+    setCancellingId(requestId);
+    const ok = await cancelJoinRequest(requestId);
+    if (ok) {
+      setMyRequests((prev) => prev.filter((r) => r.id !== requestId));
+    } else {
+      alert("Failed to cancel request.");
     }
+    setCancellingId(null);
+  }
 
-    // Normal paragraph
-    else {
-      closeLists();
-      html += `<p>${trimmed}</p>`;
-    }
-  });
+  function handleCreateProject() {
+    router.push("/input");
+  }
 
-  closeLists();
+  /* ────── FILTERED LISTS ────── */
 
-  return html;
-}
-
-function generateReportHTML(rawText: string) {
-  return `
-    <div style="
-      font-family: Arial, sans-serif;
-      padding:40px;
-      line-height:1.6;
-      color:#222;
-    ">
-      <h1 style="
-        text-align:center;
-        color:#b00020;
-        margin-bottom:30px;
-      ">
-        Disaster Incident Report
-      </h1>
-
-      <div style="font-size:14px;">
-        ${formatSectionContent(rawText)}
-      </div>
-
-      <hr style="margin-top:40px;" />
-
-      <p style="
-        font-size:11px;
-        text-align:center;
-        color:#777;
-        margin-top:20px;
-      ">
-        This is a system-generated disaster response report.
-      </p>
-    </div>
-  `;
-}
-
-/* ---------------- PAGE ---------------- */
-
-export default function DashboardPage() {
-  /* ---------- CHAT ---------- */
-  const [messages, setMessages] = useState<ChatMessage[]>([]);
-  const [chatMounted, setChatMounted] = useState(false);
-  const [chatLoading, setChatLoading] = useState(false);
-  const chatBottomRef = useRef<HTMLDivElement>(null);
-
-  // Load persisted history AFTER hydration (avoids SSR mismatch)
-  useEffect(() => {
-    const projectId = localStorage.getItem("projectId");
-    const key = `chatMessages_${projectId ?? "default"}`;
-    try {
-      const saved = localStorage.getItem(key);
-      if (saved) {
-        const parsed = JSON.parse(saved) as ChatMessage[];
-        // Filter out old report-like messages stuck in chat history
-        const clean = parsed.filter((m) => {
-          if (m.from !== "assistant") return true;
-          if (m.text.startsWith("{") && m.text.includes("fullText")) return false;
-          if (m.text.length > 2000) return false;
-          return true;
-        });
-        setMessages(clean);
-      }
-    } catch { /* ignore */ }
-    setChatMounted(true);
-  }, []);
-
-  // Persist only after the load effect has run (skip the initial empty render)
-  useEffect(() => {
-    if (!chatMounted) return;
-    const projectId = localStorage.getItem("projectId");
-    const key = `chatMessages_${projectId ?? "default"}`;
-    try {
-      localStorage.setItem(key, JSON.stringify(messages));
-    } catch { /* quota exceeded — ignore */ }
-  }, [messages, chatMounted]);
-
-  const handleSend = async (text: string) => {
-    const projectId = typeof window !== "undefined" ? localStorage.getItem("projectId") : null;
-    const now = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-
-    setMessages((prev) => [
-      ...prev,
-      { id: crypto.randomUUID(), from: "user", text, timestamp: now },
-    ]);
-    setChatLoading(true);
-
-    try {
-      const res = await fetch(`${process.env.NEXT_PUBLIC_BACKENED_DOMAIN}/chat/${projectId}`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message: text }),
-      });
-      const json = await res.json();
-      let replyText = json.text || json.reply || json.response || "No response";
-      // If backend returned JSON-wrapped report, try to extract readable text
-      if (typeof replyText === "string" && replyText.startsWith("{")) {
-        try {
-          const inner = JSON.parse(replyText);
-          replyText = inner.fullText || inner.text || inner.summary || replyText;
-        } catch { /* not JSON, use as-is */ }
-      }
-      setMessages((prev) => [
-        ...prev,
-        {
-          id: crypto.randomUUID(),
-          from: "assistant",
-          text: replyText,
-          timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
-        },
-      ]);
-    } catch {
-      setMessages((prev) => [
-        ...prev,
-        {
-          id: crypto.randomUUID(),
-          from: "assistant",
-          text: "⚠️ Failed to get a response.",
-          timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
-        },
-      ]);
-    } finally {
-      setChatLoading(false);
-    }
-  };
-
-  /* ---------- UPLOAD STATE ---------- */
-  const [files, setFiles] = useState<UploadItem[]>([]);
-  const [dragging, setDragging] = useState(false);
-
-  function handleFiles(selected: File[]) {
-    const newFiles: UploadItem[] = selected.map((file) => ({
-      id: crypto.randomUUID(),
-      file,
-      processing: true,
-    }));
-
-    setFiles((prev) => [...prev, ...newFiles]);
-
-    newFiles.forEach((item) => {
-      setTimeout(() => {
-        setFiles((prev) =>
-          prev.map((f) =>
-            f.id === item.id ? { ...f, processing: false } : f
+  const filteredMyProjects = useMemo(
+    () =>
+      filterMyQuery
+        ? myProjects.filter((p) =>
+            p.title.toLowerCase().includes(filterMyQuery.toLowerCase())
           )
-        );
-      }, 1500);
-    });
-  }
+        : myProjects,
+    [myProjects, filterMyQuery]
+  );
 
-  function removeFile(id: string) {
-    setFiles((prev) => prev.filter((f) => f.id !== id));
-  }
-  /*-------LOCATION---- */
+  const filteredJoinedProjects = useMemo(
+    () =>
+      filterJoinedQuery
+        ? joinedProjects.filter((p) =>
+            p.title.toLowerCase().includes(filterJoinedQuery.toLowerCase())
+          )
+        : joinedProjects,
+    [joinedProjects, filterJoinedQuery]
+  );
 
+  const filteredRequests = useMemo(
+    () =>
+      filterReqQuery
+        ? myRequests.filter((r) =>
+            r.projectTitle.toLowerCase().includes(filterReqQuery.toLowerCase())
+          )
+        : myRequests,
+    [myRequests, filterReqQuery]
+  );
 
-  /* ---------- MODELS ---------- */
-  const [loading, setLoading] = useState(false);
-  const [modelUrl, setModelUrl] = useState<string | null>(null);
-  const [reconstructions, setReconstructions] = useState<Reconstruction[]>([]);
-
-  /* ---------- PDF PREVIEW ---------- */
-  const [pdfZoom, setPdfZoom] = useState(0.7);
-  const [reportGenerating, setReportGenerating] = useState(false);
-  const [reportVersions, setReportVersions] = useState<ReportVersion[]>([]);
-  const [selectedReport, setSelectedReport] = useState<ReportVersion | null>(null);
-
-  /* ---------- UPLOAD MORE (INCIDENTS TAB) ---------- */
-  const [uploadFiles2, setUploadFiles2] = useState<UploadItem[]>([]);
-  const [dragging2, setDragging2] = useState(false);
-  const [uploading2, setUploading2] = useState(false);
-
-  function getFileIcon(type: string) {
-    if (type.startsWith("image")) return ImageIcon;
-    if (type.startsWith("video")) return VideoIcon;
-    if (type.startsWith("audio")) return MusicIcon;
-    return ImageIcon;
-  }
-
-  function handleFiles2(selected: File[]) {
-    const newItems: UploadItem[] = selected.map((file) => ({
-      id: crypto.randomUUID(),
-      file,
-      processing: true,
-    }));
-    setUploadFiles2((prev) => [...prev, ...newItems]);
-    newItems.forEach((item) => {
-      setTimeout(() => {
-        setUploadFiles2((prev) =>
-          prev.map((f) => f.id === item.id ? { ...f, processing: false } : f)
-        );
-      }, 1500);
-    });
-  }
-
-  async function handleUploadMore() {
-    const projectId = localStorage.getItem("projectId");
-    if (!projectId) { alert("No project found."); return; }
-    if (uploadFiles2.length === 0) { alert("No files selected."); return; }
-
-    const formData = new FormData();
-    uploadFiles2.forEach((item) => formData.append("files", item.file));
-
-    try {
-      setUploading2(true);
-      const response = await fetch(
-        `${process.env.NEXT_PUBLIC_BACKENED_DOMAIN}/projects/${projectId}/upload`,
-        { method: "POST", body: formData }
-      );
-      if (!response.ok) throw new Error("Upload failed");
-      console.log("Additional files uploaded successfully");
-      setUploadFiles2([]);
-
-      // Run analyze + event-summary once after successful upload
-      try {
-        await fetch(
-          `${process.env.NEXT_PUBLIC_BACKENED_DOMAIN}/projects/${projectId}/analyze`,
-          { method: "POST" }
-        );
-        await fetch(
-          `${process.env.NEXT_PUBLIC_BACKENED_DOMAIN}/projects/${projectId}/event-summary`,
-          { method: "POST" }
-        );
-        console.log("Pipeline re-run after additional upload");
-      } catch (pipelineErr) {
-        console.error("Pipeline re-run failed:", pipelineErr);
-      }
-
-      alert("Files uploaded and pipeline re-run successfully!");
-    } catch (error) {
-      console.error("Upload error:", error);
-      alert("Failed to upload files.");
-    } finally {
-      setUploading2(false);
-    }
-  }
-
-  function buildS3ModelPath(outputS3Prefix: string) {
-    return `https://${process.env.NEXT_PUBLIC_AWS_S3_BUCKET}.s3.${process.env.NEXT_PUBLIC_AWS_REGION}.amazonaws.com/${outputS3Prefix}odm_texturing_25d/odm_textured_model_geo.obj`;
-  }
-
-  async function fetchReconstructions(): Promise<boolean> {
-  if (typeof window === 'undefined') return false;
-  const projectId = localStorage.getItem("projectId");
-  if (!projectId) return false;
-
-  try {
-    const res = await fetch(
-      `${process.env.NEXT_PUBLIC_BACKENED_DOMAIN}/odm/projects/${projectId}/reconstructions`,
-      { headers: { "ngrok-skip-browser-warning": "true",} }
-    );
-    
-    if (!res.ok) return false;
-    console.log("Reconstructions URL:", 
-  `${process.env.NEXT_PUBLIC_BACKENED_DOMAIN}/odm/projects/${projectId}/reconstructions`
-);
-
-    const data = await res.json();
-    console.log("Fetched reconstructions:", data);
-    setReconstructions(data);
-
-    // ✅ stop condition: any reconstruction exists
-    return Array.isArray(data) && data.length > 0;
-  } catch (err) {
-    console.error("Failed to fetch reconstructions", err);
-    return false;
-  }
-}
-
-
-  /* ---------- FETCH REPORT VERSIONS ---------- */
-  async function fetchReportVersions() {
-    if (typeof window === 'undefined') return;
-    const projectId = localStorage.getItem("projectId");
-    if (!projectId) return;
-    try {
-      const res = await fetch(
-        `${process.env.NEXT_PUBLIC_BACKENED_DOMAIN}/reports/${projectId}`,
-        { headers: { "ngrok-skip-browser-warning": "true" } }
-      );
-      if (!res.ok) return;
-      const json: { success: boolean; count: number; data: ReportVersion[] } = await res.json();
-      const rdata = json.data ?? [];
-      console.log("Fetched report versions:", rdata);
-      setReportVersions(rdata);
-      // Auto-select the latest version (first in descending order) if none selected
-      if (rdata.length > 0) {
-        setSelectedReport((prev) => prev ?? rdata[0]);
-      }
-    } catch (err) {
-      console.error("Failed to fetch report versions:", err);
-    }
-  }
-
-  /* ---------- GENERATE REPORT ---------- */
-  async function generateReport() {
-    if (typeof window === 'undefined') return;
-    const projectId = localStorage.getItem("projectId");
-    if (!projectId) { alert("No project found. Please create a project first."); return; }
-
-    setReportGenerating(true);
-    try {
-      const reportRes = await fetch(
-        `${process.env.NEXT_PUBLIC_BACKENED_DOMAIN}/reports/projects/${projectId}/report`,
-        { method: "POST" }
-      );
-      console.log("Report response:", reportRes);
-      const assistantId = crypto.randomUUID();
-
-      setMessages((prev) => [
-        ...prev,
-        {
-          id: assistantId,
-          from: "assistant",
-          text: "🧠 Generating report...\n\n",
-          timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
-        },
-      ]);
-
-      const reader = reportRes.body!.getReader();
-      const decoder = new TextDecoder();
-
-      let buffer = "";
-      let fullText = "";
-
-      while (true) {
-        const { value, done } = await reader.read();
-        if (done) break;
-
-        buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split("\n");
-        buffer = lines.pop()!;
-
-        for (const line of lines) {
-          if (!line.trim()) continue;
-          const msg = JSON.parse(line);
-          if (msg.stage === "Textgen_stream" && msg.chunk) {
-            fullText += msg.chunk;
-            setMessages((prev) =>
-              prev.map((m) =>
-                m.id === assistantId ? { ...m, text: fullText } : m
-              )
-            );
-          }
-        }
-      }
-      // After report fully streamed
-      localStorage.setItem("latestReport", fullText);
-      console.log("Report response:", reportRes);
-      setMessages((prev) => prev.map((m) =>
-        m.id === assistantId ? { ...m, text: fullText } : m
-      ));
-      // Refresh versions list and auto-select new version
-      await fetchReportVersions();
-    } catch {
-      setMessages((prev) => [
-        ...prev,
-        {
-          id: crypto.randomUUID(),
-          from: "assistant",
-          text: "⚠️ Failed to generate report.",
-          timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
-        },
-      ]);
-    } finally {
-      setReportGenerating(false);
-    }
-  }
-
-  /* ---------- AUTO-SCROLL CHAT TO BOTTOM ---------- */
-  useEffect(() => {
-    chatBottomRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages, chatLoading]);
-
-  /* ---------- FETCH REPORT VERSIONS ON MOUNT ---------- */
-  useEffect(() => {
-    fetchReportVersions();
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-
-
-  async function downloadPDF(reportText: string) {
-    try {
-      const { jsPDF } = await import("jspdf");
-      
-      const doc = new jsPDF({
-        orientation: "portrait",
-        unit: "mm",
-        format: "a4",
-      });
-
-      const pageWidth = doc.internal.pageSize.getWidth();
-      const pageHeight = doc.internal.pageSize.getHeight();
-      const margin = 15;
-      const contentWidth = pageWidth - 2 * margin;
-      let yPosition = margin + 10;
-
-      // Parse the text - handle JSON if present
-      let cleanText = reportText;
-      try {
-        const parsed = JSON.parse(reportText);
-        cleanText = parsed.fullText || parsed.text || reportText;
-      } catch {
-        // Not JSON, use as-is
-      }
-
-      // Convert literal \n to actual newlines and clean up
-      cleanText = cleanText
-        .replace(/\\n/g, "\n")
-        .replace(/\\"/g, '"')
-        .replace(/\*\*/g, "")
-        .trim();
-
-      // Title
-      doc.setFontSize(20);
-      doc.setFont("helvetica", "bold");
-      doc.text("Disaster Incident Report", pageWidth / 2, yPosition, { align: "center" });
-      yPosition += 12;
-
-      // Horizontal line
-      doc.setLineWidth(0.5);
-      doc.line(margin, yPosition, pageWidth - margin, yPosition);
-      yPosition += 10;
-
-      // Process content by sections
-      const sections = cleanText.split(/\n\n+/);
-      
-      for (const section of sections) {
-        const lines = section.split("\n");
-        
-        for (let i = 0; i < lines.length; i++) {
-          let line = lines[i].trim();
-          if (!line) continue;
-
-          // Check if this is a section header (ends with : or contains specific keywords)
-          const isHeader = /^[A-Z][^.]*:$/.test(line) || 
-                          /^(Situation Understanding|Current Disaster Status|Step-by-Step|Immediate Action Plan|Location|Latitude|Longitude)/i.test(line);
-
-          // Check if it's a numbered item
-          const isNumbered = /^\d+\./.test(line);
-
-          // Check for page break needed
-          if (yPosition > pageHeight - margin - 15) {
-            doc.addPage();
-            yPosition = margin;
-          }
-
-          if (isHeader) {
-            yPosition += 4;
-            doc.setFontSize(12);
-            doc.setFont("helvetica", "bold");
-            const wrappedLines = doc.splitTextToSize(line, contentWidth);
-            for (const wl of wrappedLines) {
-              if (yPosition > pageHeight - margin - 10) {
-                doc.addPage();
-                yPosition = margin;
-              }
-              doc.text(wl, margin, yPosition);
-              yPosition += 6;
-            }
-            yPosition += 2;
-          } else if (isNumbered) {
-            doc.setFontSize(10);
-            doc.setFont("helvetica", "normal");
-            const wrappedLines = doc.splitTextToSize(line, contentWidth - 5);
-            for (const wl of wrappedLines) {
-              if (yPosition > pageHeight - margin - 10) {
-                doc.addPage();
-                yPosition = margin;
-              }
-              doc.text(wl, margin + 5, yPosition);
-              yPosition += 5;
-            }
-          } else {
-            doc.setFontSize(10);
-            doc.setFont("helvetica", "normal");
-            const wrappedLines = doc.splitTextToSize(line, contentWidth);
-            for (const wl of wrappedLines) {
-              if (yPosition > pageHeight - margin - 10) {
-                doc.addPage();
-                yPosition = margin;
-              }
-              doc.text(wl, margin, yPosition);
-              yPosition += 5;
-            }
-          }
-        }
-        yPosition += 3; // Space between sections
-      }
-
-      // Footer on each page
-      const pageCount = doc.getNumberOfPages();
-      for (let i = 1; i <= pageCount; i++) {
-        doc.setPage(i);
-        doc.setFontSize(8);
-        doc.setFont("helvetica", "italic");
-        doc.text(
-          `Page ${i} of ${pageCount} | System-generated disaster response report`,
-          pageWidth / 2,
-          pageHeight - 8,
-          { align: "center" }
-        );
-      }
-
-      doc.save("disaster_report.pdf");
-      console.log("PDF saved successfully");
-    } catch (err) {
-      console.error("Error generating PDF:", err);
-      alert("Failed to generate PDF. Check console for details.");
-    }
-  }
-
-  useEffect(() => {
-    let intervalId: NodeJS.Timeout | null = null;
-    let stopped = false;
-
-    const startPolling = async () => {
-      // run immediately once
-      const ready = await fetchReconstructions();
-
-      if (ready) return;
-
-      intervalId = setInterval(async () => {
-        if (stopped) return;
-
-        const done = await fetchReconstructions();
-
-        if (done && intervalId) {
-          clearInterval(intervalId);
-          intervalId = null;
-        }
-      }, 10_000); // 10 seconds
-    };
-
-    startPolling();
-
-    return () => {
-      stopped = true;
-      if (intervalId) clearInterval(intervalId);
-    };
-  }, []);
-
-
-  /* ---------------- UI ---------------- */
+  /* ────────────────── UI ────────────────── */
 
   return (
-    <main className="min-h-screen bg-[#0b0a0b] flex justify-center p-6 text-white">
-      <div className="w-full max-w-7xl flex flex-col">
+    <div className="min-h-screen bg-[#0b0a0b] text-white">
+      {/* ══════════ HEADER ══════════ */}
+      <header className="sticky top-0 z-30 border-b border-white/10 bg-[#0b0a0b]/80 backdrop-blur-md">
+        <div className="mx-auto flex max-w-7xl items-center justify-between px-6 py-3">
+          {/* Left — Profile card */}
+          <div className="flex items-center gap-3">
+            <div className="flex h-9 w-9 items-center justify-center rounded-full border border-white/10 bg-white/5">
+              <UserCircle className="h-5 w-5 text-white/60" />
+            </div>
+            <div className="leading-tight">
+              <p className="text-sm font-medium text-white">{userName}</p>
+              <p className="text-[11px] text-white/40">{userDesignation}</p>
+            </div>
+          </div>
 
-        <Tabs
-          defaultValue="chat"
-          onValueChange={() => setModelUrl(null)}
-          className="flex flex-col flex-1"
-        >
-          <TabsList className="bg-[#191918] border border-white/10 rounded-xl px-1 py-1 gap-1 self-center">
-            {["chat", "upload more", "emergency", "reports", "models","location"].map((v) => (
-              <TabsTrigger
-                key={v}
-                value={v}
-                className="
-                  px-4 py-2 text-sm capitalize rounded-lg transition
-                  text-white/60
-                  data-[state=active]:bg-white
-                  data-[state=active]:text-black
-                "
-              >
-                {v}
-              </TabsTrigger>
-            ))}
-          </TabsList>
-
-          <div className="mt-6 flex-1 w-full rounded-xl border border-white/10 bg-[#0f0e0f] p-6 overflow-hidden">
-
-            {/* CHAT */}
-            <TabsContent value="chat" className="h-full flex flex-col">
-              {/* Messages area */}
-              <div className="overflow-y-auto rounded-xl border border-white/10 bg-[#0b0a0b] p-4 flex flex-col gap-3" style={{ height: "calc(100vh - 320px)", minHeight: "300px" }}>
-                {messages.length === 0 && !chatLoading && (
-                  <div className="flex-1 flex items-center justify-center text-sm text-white/25 select-none">
-                    Start the conversation…
-                  </div>
+          {/* Right — Search + Join + Create */}
+          <div className="flex items-center gap-3">
+            {/* Search box */}
+            <div className="relative">
+              <div className="flex items-center gap-1 rounded-lg border border-white/10 bg-[#191918] px-3 py-1.5">
+                <Search className="h-3.5 w-3.5 text-white/30" />
+                <input
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  placeholder="Search for projects…"
+                  className="w-52 bg-transparent text-sm text-white placeholder:text-white/30 outline-none"
+                />
+                {searching && (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin text-white/40" />
                 )}
+              </div>
 
-                {messages.map((msg) => (
-                  <div
-                    key={msg.id}
-                    className={`flex flex-col gap-1 ${
-                      msg.from === "user" ? "items-end" : "items-start"
-                    }`}
-                  >
-                    <div
-                      className={`max-w-[72%] rounded-2xl px-4 py-2.5 text-sm leading-relaxed whitespace-pre-wrap break-words ${
-                        msg.from === "user"
-                          ? "bg-white text-black rounded-br-sm"
-                          : "bg-[#1f1e1f] text-white border border-white/10 rounded-bl-sm"
+              {/* Search dropdown */}
+              {searchResults.length > 0 && (
+                <div className="absolute top-full left-0 mt-1 w-full rounded-lg border border-white/10 bg-[#191918] shadow-xl z-50 max-h-52 overflow-auto">
+                  {searchResults.map((result) => (
+                    <button
+                      key={result.id}
+                      onClick={() => setSelectedSearchProject(result)}
+                      className={`w-full text-left px-3 py-2 text-sm transition ${
+                        selectedSearchProject?.id === result.id
+                          ? "bg-white/10 text-white"
+                          : "text-white/70 hover:bg-white/5 hover:text-white"
                       }`}
                     >
-                      {msg.text}
-                    </div>
-                    <span className="text-[10px] text-white/30 px-1">{msg.timestamp}</span>
-                  </div>
-                ))}
-
-                {/* Typing indicator */}
-                {chatLoading && (
-                  <div className="flex flex-col items-start gap-1">
-                    <div className="bg-[#1f1e1f] border border-white/10 rounded-2xl rounded-bl-sm px-4 py-3 flex items-center gap-1.5">
-                      <span className="w-1.5 h-1.5 bg-white/50 rounded-full animate-bounce" style={{ animationDelay: "0ms" }} />
-                      <span className="w-1.5 h-1.5 bg-white/50 rounded-full animate-bounce" style={{ animationDelay: "150ms" }} />
-                      <span className="w-1.5 h-1.5 bg-white/50 rounded-full animate-bounce" style={{ animationDelay: "300ms" }} />
-                    </div>
-                    <span className="text-[10px] text-white/30 px-1">Typing…</span>
-                  </div>
-                )}
-
-                <div ref={chatBottomRef} />
-              </div>
-
-              {/* Input */}
-              <div className="mt-3 flex items-center gap-2">
-                <div className="flex-1">
-                  <ChatInput onSend={handleSend} disabled={chatLoading} />
-                </div>
-                {messages.length > 0 && (
-                  <button
-                    onClick={() => setMessages([])}
-                    className="shrink-0 text-xs text-white/30 hover:text-white/60 transition px-2 py-1 rounded-md hover:bg-white/5"
-                    title="Clear chat history"
-                  >
-                    Clear
-                  </button>
-                )}
-              </div>
-            </TabsContent>
-
-            {/* UPLOAD MORE */}
-            <TabsContent value="upload more" className="h-full flex flex-col gap-4 max-w-lg mx-auto w-full pt-4">
-              {/* Drop Zone */}
-              <div
-                onDragOver={(e) => { e.preventDefault(); setDragging2(true); }}
-                onDragLeave={() => setDragging2(false)}
-                onDrop={(e) => { e.preventDefault(); setDragging2(false); handleFiles2(Array.from(e.dataTransfer.files)); }}
-                className={`border-2 border-dashed rounded-xl p-8 text-center cursor-pointer transition ${
-                  dragging2 ? "border-white bg-white/5" : "border-white/20 hover:border-white/40"
-                }`}
-              >
-                <input
-                  type="file"
-                  multiple
-                  hidden
-                  id="uploadMore"
-                  onChange={(e) => handleFiles2(e.target.files ? Array.from(e.target.files) : [])}
-                />
-                <label htmlFor="uploadMore" className="cursor-pointer flex flex-col items-center gap-2">
-                  <ImageIcon className="h-8 w-8 text-white/30" />
-                  <p className="text-sm text-white/70">Drag & drop images / audio / video here</p>
-                  <p className="text-xs text-white/40">or click to browse</p>
-                </label>
-              </div>
-
-              {/* File List */}
-              {uploadFiles2.length > 0 && (
-                <div className="space-y-2">
-                  {uploadFiles2.map((item) => {
-                    const Icon = getFileIcon(item.file.type);
-                    return (
-                      <div
-                        key={item.id}
-                        className="flex items-center justify-between gap-3 rounded-md border border-white/10 bg-[#191918] px-3 py-2 text-sm"
-                      >
-                        <div className="flex items-center gap-3 min-w-0">
-                          {item.processing ? (
-                            <Loader2 className="h-4 w-4 animate-spin text-white/70" />
-                          ) : (
-                            <Icon className="h-4 w-4 text-white/70" />
-                          )}
-                          <span className="truncate text-white/80">{item.file.name}</span>
-                        </div>
-                        <button onClick={() => setUploadFiles2((prev) => prev.filter((f) => f.id !== item.id))} className="text-white/50 hover:text-white">
-                          <X className="h-4 w-4" />
-                        </button>
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
-
-              {/* Submit Button */}
-              <button
-                onClick={handleUploadMore}
-                disabled={uploading2 || uploadFiles2.length === 0}
-                className="w-full py-2 rounded-lg bg-white text-black text-sm font-medium hover:bg-white/90 transition disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
-              >
-                {uploading2 ? (
-                  <><Loader2 className="h-4 w-4 animate-spin" /> Uploading...</>
-                ) : (
-                  "Submit Additional Files"
-                )}
-              </button>
-            </TabsContent>
-
-            {/* EMERGENCY */}
-            <TabsContent value="emergency" className="h-full overflow-auto">
-              <ContactCards />
-            </TabsContent>
-
-            {/* REPORTS */}
-            <TabsContent value="reports" className="h-[650px] grid grid-cols-12 gap-4">
-
-              {/* LEFT - Report Versions List */}
-              <div className="col-span-3 flex flex-col gap-4 h-full overflow-auto">
-                {/* Create Report Button */}
-                <button
-                  onClick={generateReport}
-                  disabled={reportGenerating}
-                  className="w-full px-4 py-2 rounded-lg bg-white text-black text-sm font-medium hover:bg-white/90 transition disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
-                >
-                  + Create Latest Report
-                </button>
-
-                {/* Loading UI */}
-                {reportGenerating && (
-                  <div className="rounded-xl border border-white/10 bg-[#0b0a0b] p-4 flex flex-col items-center gap-3">
-                    <div className="flex gap-1 items-end h-6">
-                      <span className="w-1.5 bg-white/60 rounded-full animate-bounce" style={{ height: '10px', animationDelay: '0ms' }} />
-                      <span className="w-1.5 bg-white/60 rounded-full animate-bounce" style={{ height: '16px', animationDelay: '150ms' }} />
-                      <span className="w-1.5 bg-white/60 rounded-full animate-bounce" style={{ height: '10px', animationDelay: '300ms' }} />
-                      <span className="w-1.5 bg-white/60 rounded-full animate-bounce" style={{ height: '20px', animationDelay: '150ms' }} />
-                      <span className="w-1.5 bg-white/60 rounded-full animate-bounce" style={{ height: '10px', animationDelay: '0ms' }} />
-                    </div>
-                    <p className="text-xs text-white/60 text-center">Generating report…</p>
-                    <p className="text-[10px] text-white/30 text-center">This may take a moment</p>
-                  </div>
-                )}
-
-                <div className="rounded-xl border border-white/10 bg-[#0b0a0b] p-3">
-                  <h3 className="text-sm font-medium text-white/80 mb-3">Report Versions</h3>
-                  
-                  <div className="space-y-2">
-                    {reportVersions.length === 0 ? (
-                      <p className="text-xs text-white/40 text-center py-4">
-                        No reports generated yet
-                      </p>
-                    ) : (
-                      reportVersions.map((report) => (
-                        <div
-                          key={report.id}
-                          className={`p-2 rounded-lg border transition cursor-pointer ${
-                            selectedReport?.id === report.id
-                              ? "border-white/40 bg-white/10"
-                              : "border-white/10 bg-[#191918] hover:bg-white/5"
-                          }`}
-                          onClick={() => setSelectedReport(report)}
-                        >
-                          <div className="flex items-center justify-between mb-2">
-                            <span className="text-xs font-medium text-white">
-                              Version {report.version}
-                            </span>
-                          </div>
-
-                          <div className="flex gap-2">
-                            <button
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                if (report.content) downloadPDF(report.content);
-                                else alert("No content available for this version");
-                              }}
-                              className="flex-1 text-[10px] px-2 py-1 rounded bg-white text-black hover:bg-white/90 transition"
-                            >
-                              Download PDF
-                            </button>
-                            <button
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                setSelectedReport(report);
-                              }}
-                              className="flex-1 text-[10px] px-2 py-1 rounded border border-white/20 text-white hover:bg-white/10 transition"
-                            >
-                              Preview
-                            </button>
-                          </div>
-                        </div>
-                      ))
-                    )}
-                  </div>
-                </div>
-              </div>
-
-              {/* RIGHT - PDF Preview */}
-              <div className="col-span-9 border border-white/10 rounded-xl bg-[#2a2a2a] overflow-hidden flex flex-col h-full">
-                {/* PDF Preview Header */}
-                <div className="flex items-center justify-between px-4 py-2 border-b border-white/10 bg-[#0f0e0f] flex-shrink-0">
-                  <span className="text-sm text-white/60">
-                    {selectedReport
-                      ? `Report Preview — Version ${selectedReport.version}`
-                      : "Report Preview"}
-                  </span>
-                  <div className="flex items-center gap-3">
-                    {/* Zoom Controls */}
-                    <div className="flex items-center gap-1 bg-white/10 rounded px-2 py-1">
-                      <button
-                        onClick={() => setPdfZoom(z => Math.max(0.3, z - 0.1))}
-                        className="text-white hover:text-white/80 text-sm px-1"
-                        title="Zoom Out"
-                      >
-                        −
-                      </button>
-                      <span className="text-xs text-white/60 w-12 text-center">
-                        {Math.round(pdfZoom * 100)}%
-                      </span>
-                      <button
-                        onClick={() => setPdfZoom(z => Math.min(1.5, z + 0.1))}
-                        className="text-white hover:text-white/80 text-sm px-1"
-                        title="Zoom In"
-                      >
-                        +
-                      </button>
-                    </div>
-                    <button
-                      onClick={() => {
-                        if (selectedReport?.content) downloadPDF(selectedReport.content);
-                        else alert("No report selected");
-                      }}
-                      className="text-xs px-3 py-1 rounded bg-white text-black hover:bg-white/90 transition"
-                    >
-                      Download
-                    </button>
-                  </div>
-                </div>
-
-                {/* PDF Content Preview - Scrollable container with fixed height */}
-                <div className="flex-1 overflow-auto p-4 bg-[#525659] min-h-0">
-                  <div className="flex justify-center pb-4" style={{ minHeight: `${842 * pdfZoom + 32}px` }}>
-                  {/* A4 Page Container - 210mm x 297mm ratio (1:1.414) */}
-                  <div 
-                    className="bg-white shadow-2xl origin-top"
-                    style={{
-                      width: '595px', // A4 width at 72 DPI
-                      minHeight: '842px', // A4 height at 72 DPI
-                      padding: '40px',
-                      transform: `scale(${pdfZoom})`,
-                      transformOrigin: 'top center',
-                    }}
-                  >
-                    {/* PDF Header */}
-                    <h1 
-                      style={{
-                        fontSize: '20px',
-                        fontWeight: 'bold',
-                        textAlign: 'center',
-                        color: '#000',
-                        marginBottom: '12px',
-                        fontFamily: 'Helvetica, Arial, sans-serif',
-                      }}
-                    >
-                      Disaster Incident Report
-                    </h1>
-                    
-                    {/* Horizontal line */}
-                    <hr style={{ 
-                      border: 'none', 
-                      borderTop: '1px solid #000', 
-                      marginBottom: '20px' 
-                    }} />
-                    
-                    {/* Preview content - matching PDF structure */}
-                    <div style={{ fontFamily: 'Helvetica, Arial, sans-serif' }}>
-                      {selectedReport?.content ? (
-                        (() => {
-                          let reportText = selectedReport.content;
-                          
-                          // Parse JSON if present
-                          try {
-                            const parsed = JSON.parse(reportText);
-                            reportText = parsed.fullText || parsed.text || reportText;
-                          } catch {
-                            // Not JSON, use as-is
-                          }
-                          
-                          // Clean up text
-                          const cleanText = reportText
-                            .replace(/\\n/g, "\n")
-                            .replace(/\\"/g, '"')
-                            .replace(/\*\*/g, "")
-                            .trim();
-                          
-                          // Split into sections
-                          const sections = cleanText.split(/\n\n+/);
-                          
-                          return sections.map((section, sectionIdx) => {
-                            const lines = section.split("\n");
-                            
-                            return (
-                              <div key={sectionIdx} style={{ marginBottom: '12px' }}>
-                                {lines.map((line, lineIdx) => {
-                                  const trimmedLine = line.trim();
-                                  if (!trimmedLine) return null;
-                                  
-                                  // Check if header
-                                  const isHeader = /^[A-Z][^.]*:$/.test(trimmedLine) || 
-                                    /^(Situation Understanding|Current Disaster Status|Step-by-Step|Immediate Action Plan|Location|Latitude|Longitude)/i.test(trimmedLine);
-                                  
-                                  // Check if numbered
-                                  const isNumbered = /^\d+\./.test(trimmedLine);
-                                  
-                                  if (isHeader) {
-                                    return (
-                                      <p 
-                                        key={lineIdx}
-                                        style={{
-                                          fontSize: '12px',
-                                          fontWeight: 'bold',
-                                          color: '#000',
-                                          marginTop: '16px',
-                                          marginBottom: '6px',
-                                        }}
-                                      >
-                                        {trimmedLine}
-                                      </p>
-                                    );
-                                  } else if (isNumbered) {
-                                    return (
-                                      <p 
-                                        key={lineIdx}
-                                        style={{
-                                          fontSize: '10px',
-                                          color: '#000',
-                                          marginLeft: '20px',
-                                          marginBottom: '4px',
-                                          lineHeight: '1.5',
-                                        }}
-                                      >
-                                        {trimmedLine}
-                                      </p>
-                                    );
-                                  } else {
-                                    return (
-                                      <p 
-                                        key={lineIdx}
-                                        style={{
-                                          fontSize: '10px',
-                                          color: '#000',
-                                          marginBottom: '4px',
-                                          lineHeight: '1.5',
-                                        }}
-                                      >
-                                        {trimmedLine}
-                                      </p>
-                                    );
-                                  }
-                                })}
-                              </div>
-                            );
-                          });
-                        })()
-                      ) : (
-                        <div style={{ 
-                          textAlign: 'center', 
-                          color: '#999', 
-                          paddingTop: '200px' 
-                        }}>
-                          <p style={{ fontSize: '24px', marginBottom: '8px' }}>📄</p>
-                          <p style={{ fontSize: '14px' }}>Select a report version to preview</p>
-                        </div>
-                      )}
-                    </div>
-
-                    {/* Footer */}
-                    <div style={{ 
-                      marginTop: '40px', 
-                      borderTop: '1px solid #ccc', 
-                      paddingTop: '10px' 
-                    }}>
-                      <p style={{ 
-                        fontSize: '8px', 
-                        textAlign: 'center', 
-                        color: '#777',
-                        fontStyle: 'italic',
-                        fontFamily: 'Helvetica, Arial, sans-serif',
-                      }}>
-                        Page 1 | System-generated disaster response report
-                      </p>
-                    </div>
-                  </div>
-                  </div>
-                </div>
-              </div>
-
-            </TabsContent>
-
-            {/* MODELS */}
-            <TabsContent value="models" className="h-full grid grid-cols-12 gap-4">
-
-              {/* LEFT */}
-              <div className="col-span-3 flex flex-col gap-4">
-                <div className="rounded-xl border border-white/10 bg-[#0b0a0b] p-3">
-                  <ModelUploadPanel
-                    files={files}
-                    dragging={dragging}
-                    setDragging={setDragging}
-                    onFiles={handleFiles}
-                    onRemove={removeFile}
-                    projectId={typeof window !== 'undefined' ? localStorage.getItem("projectId") || "" : ""}
-                    setGlobalLoading={setLoading}
-                    onUploadComplete={fetchReconstructions}
-                    disabled={loading}
-                  />
-                </div>
-
-                <div className="rounded-xl border border-white/10 bg-[#0b0a0b] p-2 space-y-1">
-                  {reconstructions.length === 0 && (
-                    <p className="text-xs text-white/40 text-center py-4">
-                      No reconstructions yet
-                    </p>
-                  )}
-
-                  {reconstructions.map((r) => (
-                    <button
-                      key={r.version}
-                      onClick={() =>
-                        setModelUrl(buildS3ModelPath(r.outputS3Prefix))
-                      }
-                      className="w-full text-left text-xs px-2 py-1 rounded hover:bg-white/10 transition"
-                    >
-                      Version {r.version}
+                      {result.title}
                     </button>
                   ))}
                 </div>
-              </div>
+              )}
+            </div>
 
-              {/* RIGHT */}
-              <div className="relative col-span-9 border border-white/10 rounded-xl bg-black overflow-hidden">
-                {loading && (
-                  <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-3 bg-black/70 rounded-xl">
-                    <Loader2 className="h-8 w-8 animate-spin text-white" />
-                    <p className="text-sm text-white/80">Processing 3D reconstruction…</p>
-                  </div>
-                )}
-                {modelUrl ? (
-                  <ModelViewerOBJ
-                    modelPath={modelUrl}
-                    onClose={() => setModelUrl(null)}
-                  />
-                ) : (
-                  <div className="h-full flex flex-col items-center justify-center text-white/40 text-sm gap-2">
-                    <span>🧩</span>
-                    <span>Select a 3D model version</span>
-                  </div>
-                )}
-              </div>
+            {/* Join button */}
+            <button
+              onClick={handleJoinProject}
+              disabled={!selectedSearchProject || joining}
+              className="flex items-center gap-1.5 rounded-lg border border-white/10 bg-[#191918] px-4 py-1.5 text-sm text-white/80 hover:bg-white/5 hover:text-white transition disabled:opacity-40 disabled:cursor-not-allowed"
+            >
+              {joining ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              ) : (
+                <Send className="h-3.5 w-3.5" />
+              )}
+              Join Project
+            </button>
 
-            </TabsContent>
-
-            {/* MAP */}
-<TabsContent value="location" className="h-full">
-  <div className="rounded-xl border border-white/10 bg-[#0b0a0b] overflow-hidden" style={{ height: "calc(100vh - 180px)" }}>
-    <MapViewer />
-  </div>
-</TabsContent>
-
-
+            {/* Create Project */}
+            <button
+              onClick={handleCreateProject}
+              className="flex items-center gap-1.5 rounded-lg bg-white px-4 py-1.5 text-sm font-medium text-black hover:bg-white/90 transition cursor-pointer"
+            >
+              <Plus className="h-4 w-4" />
+              Create Project
+            </button>
           </div>
-        </Tabs>
-      </div>
-    </main>
+        </div>
+      </header>
+
+      {/* ══════════ MAIN ══════════ */}
+      <main className="mx-auto max-w-7xl px-6 py-8">
+        {loading ? (
+          <div className="flex items-center justify-center py-32">
+            <Loader2 className="h-8 w-8 animate-spin text-white/40" />
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
+            {/* ── COLUMN 1 — My Projects ── */}
+            <section className="flex flex-col rounded-xl border border-white/10 bg-[#111011]">
+              {/* Section header */}
+              <div className="flex items-center justify-between border-b border-white/10 px-4 py-3">
+                <div className="flex items-center gap-2">
+                  <FolderOpen className="h-4 w-4 text-white/50" />
+                  <h2 className="text-sm font-medium text-white/80">
+                    My Projects
+                  </h2>
+                </div>
+                <SectionFilter
+                  value={filterMyQuery}
+                  onChange={setFilterMyQuery}
+                  open={filterMyOpen}
+                  onToggle={() => {
+                    setFilterMyOpen((o) => !o);
+                    if (filterMyOpen) setFilterMyQuery("");
+                  }}
+                />
+              </div>
+
+              {/* List */}
+              <div className="flex-1 overflow-auto p-2" style={{ maxHeight: "calc(100vh - 260px)" }}>
+                {filteredMyProjects.length === 0 ? (
+                  <p className="py-10 text-center text-xs text-white/25">
+                    {filterMyQuery ? "No matching projects" : "No projects yet"}
+                  </p>
+                ) : (
+                  <div className="space-y-1">
+                    {filteredMyProjects.map((project) => (
+                      <button
+                        key={project.id}
+                        onClick={() => handleOpenProject(project.id)}
+                        className="w-full text-left rounded-lg px-3 py-2.5 text-sm text-white/70 hover:bg-white/5 hover:text-white transition"
+                      >
+                        {project.title}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </section>
+
+            {/* ── COLUMN 2 — Joined Projects ── */}
+            <section className="flex flex-col rounded-xl border border-white/10 bg-[#111011]">
+              {/* Section header */}
+              <div className="flex items-center justify-between border-b border-white/10 px-4 py-3">
+                <div className="flex items-center gap-2">
+                  <Users className="h-4 w-4 text-white/50" />
+                  <h2 className="text-sm font-medium text-white/80">
+                    Joined Projects
+                  </h2>
+                </div>
+                <SectionFilter
+                  value={filterJoinedQuery}
+                  onChange={setFilterJoinedQuery}
+                  open={filterJoinedOpen}
+                  onToggle={() => {
+                    setFilterJoinedOpen((o) => !o);
+                    if (filterJoinedOpen) setFilterJoinedQuery("");
+                  }}
+                />
+              </div>
+
+              {/* List */}
+              <div className="flex-1 overflow-auto p-2" style={{ maxHeight: "calc(100vh - 260px)" }}>
+                {filteredJoinedProjects.length === 0 ? (
+                  <p className="py-10 text-center text-xs text-white/25">
+                    {filterJoinedQuery
+                      ? "No matching projects"
+                      : "No joined projects"}
+                  </p>
+                ) : (
+                  <div className="space-y-1">
+                    {filteredJoinedProjects.map((project) => (
+                      <button
+                        key={project.id}
+                        onClick={() => handleOpenProject(project.id)}
+                        className="w-full flex items-center justify-between rounded-lg px-3 py-2.5 text-sm hover:bg-white/5 transition"
+                      >
+                        <span className="text-white/70 hover:text-white truncate">
+                          {project.title}
+                        </span>
+                        <span className="ml-2 shrink-0 rounded-full border border-white/10 bg-white/5 px-2.5 py-0.5 text-[11px] text-white/40">
+                          {project.role}
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </section>
+
+            {/* ── COLUMN 3 — My Requests ── */}
+            <section className="flex flex-col rounded-xl border border-white/10 bg-[#111011]">
+              {/* Section header */}
+              <div className="flex items-center justify-between border-b border-white/10 px-4 py-3">
+                <div className="flex items-center gap-2">
+                  <Send className="h-4 w-4 text-white/50" />
+                  <h2 className="text-sm font-medium text-white/80">
+                    My Requests
+                  </h2>
+                </div>
+                <SectionFilter
+                  value={filterReqQuery}
+                  onChange={setFilterReqQuery}
+                  open={filterReqOpen}
+                  onToggle={() => {
+                    setFilterReqOpen((o) => !o);
+                    if (filterReqOpen) setFilterReqQuery("");
+                  }}
+                />
+              </div>
+
+              {/* List */}
+              <div className="flex-1 overflow-auto p-2" style={{ maxHeight: "calc(100vh - 260px)" }}>
+                {filteredRequests.length === 0 ? (
+                  <p className="py-10 text-center text-xs text-white/25">
+                    {filterReqQuery
+                      ? "No matching requests"
+                      : "No requests sent"}
+                  </p>
+                ) : (
+                  <div className="space-y-1">
+                    {filteredRequests.map((req) => (
+                      <div
+                        key={req.id}
+                        className="flex items-center justify-between gap-2 rounded-lg px-3 py-2.5 hover:bg-white/5 transition"
+                      >
+                        <span className="text-sm text-white/70 truncate">
+                          {req.projectTitle}
+                        </span>
+                        <div className="flex items-center gap-2 shrink-0">
+                          <StatusBadge status={req.status} />
+                          <button
+                            onClick={() => handleCancelRequest(req.id)}
+                            disabled={cancellingId === req.id}
+                            className="p-1 rounded-md text-white/30 hover:text-red-400 hover:bg-red-500/10 transition disabled:opacity-40"
+                            title="Cancel request"
+                          >
+                            {cancellingId === req.id ? (
+                              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                            ) : (
+                              <X className="h-3.5 w-3.5" />
+                            )}
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </section>
+          </div>
+        )}
+      </main>
+    </div>
   );
 }

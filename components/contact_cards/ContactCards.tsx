@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from "@/components/ui/card";
 import { Loader2, Phone, Mail, MapPin, Building2, ShieldAlert, Flame, HeartPulse } from "lucide-react";
+import { fetchEmergencyServices } from "@/lib/api";
 
 type Service = {
   id: number;
@@ -80,10 +81,7 @@ export function ContactCards() {
         const controller = new AbortController();
         const timeoutId = setTimeout(() => controller.abort(), 12000); // 12s per attempt
 
-        const res = await fetch(
-          `/api/emergency?lat=${lat}&lng=${lng}`,
-          { signal: controller.signal }
-        );
+        const res = await fetchEmergencyServices(lat!, lng!, controller.signal);
         clearTimeout(timeoutId);
 
         if (!res.ok) throw new Error(`HTTP ${res.status}`);

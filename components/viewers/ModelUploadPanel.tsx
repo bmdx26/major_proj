@@ -3,6 +3,7 @@
 import { DragEvent } from "react";
 import { Button } from "@/components/ui/button";
 import { Loader2, X, ImageIcon, Upload } from "lucide-react";
+import { uploadODMImages, startReconstruction } from "@/lib/api";
 
 export type UploadItem = {
   id: string;
@@ -50,25 +51,13 @@ export default function ModelUploadPanel({
       files.forEach((f) => formData.append("images", f.file));
 
       // 1️⃣ Upload images
-      const uploadRes = await fetch(
-        `${process.env.NEXT_PUBLIC_BACKENED_DOMAIN}/api/projects/${projectId}/odm/upload`,
-        {
-          method: "POST",
-          body: formData,
-        }
-      );
+      const data = await uploadODMImages(projectId, formData);
+      if (!data) throw new Error("Upload failed");
 
-      if (!uploadRes.ok) throw new Error("Upload failed");
-
-      const data = await uploadRes.json();
       const version = data.odm.version;
 
-
       // 2️⃣ Start reconstruction
-      await fetch(
-        `${process.env.NEXT_PUBLIC_BACKENED_DOMAIN}/odm/projects/${projectId}/reconstructions/${version}/run`,
-        { method: "POST" }
-      );
+      await startReconstruction(projectId, version);
 
       onUploadComplete();
     } catch (err) {
