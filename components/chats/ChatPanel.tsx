@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useRef, useCallback } from "react";
+import React, { useState, useEffect, useRef, useCallback } from "react";
 import {
   Loader2,
   Reply,
@@ -43,10 +43,16 @@ function roleBadge(role: string | null) {
 
 function formatTime(iso: string) {
   try {
-    return new Date(iso).toLocaleTimeString([], {
+    const d = new Date(iso);
+    const date = d.toLocaleDateString([], {
+      day: "2-digit",
+      month: "short",
+    });
+    const time = d.toLocaleTimeString([], {
       hour: "2-digit",
       minute: "2-digit",
     });
+    return `${date}, ${time}`;
   } catch {
     return "";
   }
@@ -239,24 +245,31 @@ export default function ChatPanel({ projectId }: Props) {
           </div>
         )}
 
-        {messages.map((msg) => {
+        {messages.map((msg, idx) => {
           const own = isOwn(msg);
           const isAI = msg.sender.role === "SYSTEM";
 
           return (
-            <div
-              key={msg.id}
-              className={`group flex flex-col gap-0.5 ${
-                own ? "items-end" : "items-start"
-              }`}
-            >
-              {/* Sender name + role (only for others) */}
+            <React.Fragment key={msg.id}>
+              {idx > 0 && (
+                <div className="w-full border-t border-white/5" />
+              )}
+              <div
+                className={`group flex flex-col gap-0.5 ${
+                  own ? "items-end" : "items-start"
+                }`}
+              >
+              {/* Sender name + designation (only for others) */}
               {!own && (
-                <div className="flex items-center gap-1 px-1">
+                <div className="flex items-center gap-1.5 px-1">
                   <span className="text-[11px] font-medium text-white/60">
                     {isAI ? "MitigateAI" : msg.sender.name}
                   </span>
-                  {roleBadge(msg.sender.role)}
+                  {!isAI && msg.sender.designation && (
+                    <span className="text-[10px] text-white/30">
+                      {msg.sender.designation}
+                    </span>
+                  )}
                 </div>
               )}
 
@@ -307,11 +320,15 @@ export default function ChatPanel({ projectId }: Props) {
                 </button>
               </div>
 
-              {/* Timestamp */}
-              <span className="text-[10px] text-white/25 px-1">
-                {formatTime(msg.createdAt)}
-              </span>
+              {/* Timestamp + role */}
+              <div className="flex items-center gap-1.5 px-1">
+                <span className="text-[10px] text-white/25">
+                  {formatTime(msg.createdAt)}
+                </span>
+                {roleBadge(msg.sender.role)}
+              </div>
             </div>
+            </React.Fragment>
           );
         })}
 
