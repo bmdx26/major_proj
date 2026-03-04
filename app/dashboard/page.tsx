@@ -15,13 +15,15 @@ import {
   FolderOpen,
   Users,
   Send,
+  LogOut,
+  KeyRound,
 } from "lucide-react";
 import {
   fetchMyProjects,
   fetchJoinedProjects,
   fetchMyRequests,
   searchProjects,
-  sendJoinRequest,
+  sendJoinRequestByCode,
   cancelJoinRequest,
 } from "@/lib/api";
 import type {
@@ -34,6 +36,7 @@ import type {
 /* ──────────────── STATUS BADGE ──────────────── */
 
 function StatusBadge({ status }: { status: JoinRequest["status"] }) {
+  const key = status.toLowerCase() as "pending" | "accepted" | "rejected";
   const config = {
     pending: {
       icon: Clock,
@@ -50,8 +53,9 @@ function StatusBadge({ status }: { status: JoinRequest["status"] }) {
       label: "Rejected",
       cls: "bg-red-500/15 text-red-400 border-red-500/20",
     },
-  }[status];
+  }[key];
 
+  if (!config) return null;
   const Icon = config.icon;
 
   return (
@@ -121,6 +125,14 @@ export default function DashboardPage() {
   const [selectedSearchProject, setSelectedSearchProject] = useState<SearchResult | null>(null);
   const [joining, setJoining] = useState(false);
 
+  /* ── Join by code popup ── */
+  const [joinCodeOpen, setJoinCodeOpen] = useState(false);
+  const [joinCodeValue, setJoinCodeValue] = useState("");
+  const [joinCodeLoading, setJoinCodeLoading] = useState(false);
+
+  /* ── Logout popup ── */
+  const [logoutOpen, setLogoutOpen] = useState(false);
+
   /* ── Section filters ── */
   const [filterMyOpen, setFilterMyOpen] = useState(false);
   const [filterMyQuery, setFilterMyQuery] = useState("");
@@ -131,12 +143,24 @@ export default function DashboardPage() {
   const [filterReqOpen, setFilterReqOpen] = useState(false);
   const [filterReqQuery, setFilterReqQuery] = useState("");
 
+
+
   /* ── Cancelling request ── */
   const [cancellingId, setCancellingId] = useState<string | null>(null);
 
   /* ────── LOAD DATA ON MOUNT ────── */
 
+
   useEffect(() => {
+const params = new URLSearchParams(window.location.search);
+    const token = params.get("token");
+    if (token) {
+      localStorage.setItem("authToken", token);
+      // Clean the URL
+      window.history.replaceState({}, "", "/login");
+      
+    }
+
     setUserName(localStorage.getItem("userName") || "User");
     setUserDesignation(localStorage.getItem("userDesignation") || "Member");
 
@@ -178,15 +202,25 @@ export default function DashboardPage() {
 
   function handleOpenProject(projectId: string) {
     localStorage.setItem("projectId", projectId);
+    // Find project from already-fetched data
+    const project =
+      myProjects.find((p) => p.id === projectId) ??
+      joinedProjects.find((p) => p.id === projectId);
+    if (project) {
+      localStorage.setItem("projectName", project.title);
+    }
+    if (project?.latitude != null && project?.longitude != null) {
+      localStorage.setItem("projectLat", String(project.latitude));
+      localStorage.setItem("projectLng", String(project.longitude));
+    }
     router.push("/workspace");
   }
 
   async function handleJoinProject() {
     if (!selectedSearchProject) return;
     setJoining(true);
-    const ok = await sendJoinRequest(selectedSearchProject.id);
+    const ok = await sendJoinRequestByCode("");
     if (ok) {
-      // Refresh requests list
       const requests = await fetchMyRequests();
       setMyRequests(requests);
       setSearchQuery("");
@@ -198,9 +232,33 @@ export default function DashboardPage() {
     setJoining(false);
   }
 
-  async function handleCancelRequest(requestId: string) {
+  async function handleJoinByCode() {
+    if (!joinCodeValue.trim()) return;
+    setJoinCodeLoading(true);
+    const ok = await sendJoinRequestByCode(joinCodeValue.trim());
+    if (ok) {
+      const requests = await fetchMyRequests();
+      setMyRequests(requests);
+      setJoinCodeValue("");
+      setJoinCodeOpen(false);
+    } else {
+      alert("Invalid code or failed to join.");
+    }
+    setJoinCodeLoading(false);
+  }
+
+  function handleLogout() {
+    localStorage.removeItem("authToken");
+    localStorage.removeItem("userName");
+    localStorage.removeItem("userDesignation");
+    localStorage.removeItem("projectId");
+    localStorage.removeItem("projectName");
+    router.push("/login");
+  }
+
+  async function handleCancelRequest(requestId: string, projectId: string) {
     setCancellingId(requestId);
-    const ok = await cancelJoinRequest(requestId);
+    const ok = await cancelJoinRequest(projectId);
     if (ok) {
       setMyRequests((prev) => prev.filter((r) => r.id !== requestId));
     } else {
@@ -210,6 +268,7 @@ export default function DashboardPage() {
   }
 
   function handleCreateProject() {
+
     router.push("/input");
   }
 
@@ -254,8 +313,40 @@ export default function DashboardPage() {
         <div className="mx-auto flex max-w-7xl items-center justify-between px-6 py-3">
           {/* Left — Profile card */}
           <div className="flex items-center gap-3">
-            <div className="flex h-9 w-9 items-center justify-center rounded-full border border-white/10 bg-white/5">
-              <UserCircle className="h-5 w-5 text-white/60" />
+            <div className="relative z-50">
+              <button
+                onClick={() => setLogoutOpen((o) => !o)}
+                className="flex h-9 w-9 items-center justify-center rounded-full border border-white/10 bg-white/5 hover:bg-white/10 transition cursor-pointer"
+                title="Account"
+              >
+                <UserCircle className="h-5 w-5 text-white/60" />
+              </button>
+
+              {/* Logout popup */}
+              {logoutOpen && (
+                <>
+                  {/* Click-away backdrop */}
+                  <div
+                    className="fixed inset-0 z-40"
+                    onClick={() => setLogoutOpen(false)}
+                  />
+                  <div className="absolute left-0 top-full mt-2 w-56 rounded-lg border border-white/10 bg-[#191918] shadow-xl z-50 p-3">
+                    <div className="mb-3">
+                      <p className="text-sm font-medium text-white">{userName}</p>
+                      <p className="text-[11px] text-white/40">{userDesignation}</p>
+                    </div>
+                    <div className="border-t border-white/10 pt-2">
+                      <button
+                        onClick={handleLogout}
+                        className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm text-red-400 hover:bg-red-500/10 transition"
+                      >
+                        <LogOut className="h-4 w-4" />
+                        Logout
+                      </button>
+                    </div>
+                  </div>
+                </>
+              )}
             </div>
             <div className="leading-tight">
               <p className="text-sm font-medium text-white">{userName}</p>
@@ -302,15 +393,10 @@ export default function DashboardPage() {
 
             {/* Join button */}
             <button
-              onClick={handleJoinProject}
-              disabled={!selectedSearchProject || joining}
-              className="flex items-center gap-1.5 rounded-lg border border-white/10 bg-[#191918] px-4 py-1.5 text-sm text-white/80 hover:bg-white/5 hover:text-white transition disabled:opacity-40 disabled:cursor-not-allowed"
+              onClick={() => setJoinCodeOpen(true)}
+              className="flex items-center gap-1.5 rounded-lg border border-white/10 bg-[#191918] px-4 py-1.5 text-sm text-white/80 hover:bg-white/5 hover:text-white transition"
             >
-              {joining ? (
-                <Loader2 className="h-3.5 w-3.5 animate-spin" />
-              ) : (
-                <Send className="h-3.5 w-3.5" />
-              )}
+              <KeyRound className="h-3.5 w-3.5" />
               Join Project
             </button>
 
@@ -469,7 +555,7 @@ export default function DashboardPage() {
                         <div className="flex items-center gap-2 shrink-0">
                           <StatusBadge status={req.status} />
                           <button
-                            onClick={() => handleCancelRequest(req.id)}
+                            onClick={() => handleCancelRequest(req.id, req.projectId)}
                             disabled={cancellingId === req.id}
                             className="p-1 rounded-md text-white/30 hover:text-red-400 hover:bg-red-500/10 transition disabled:opacity-40"
                             title="Cancel request"
@@ -490,6 +576,44 @@ export default function DashboardPage() {
           </div>
         )}
       </main>
+
+      {/* ══════════ JOIN BY CODE MODAL ══════════ */}
+      {joinCodeOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
+          <div className="w-full max-w-sm rounded-xl border border-white/10 bg-[#191918] p-6 shadow-2xl">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-sm font-medium text-white">Join Project</h3>
+              <button
+                onClick={() => { setJoinCodeOpen(false); setJoinCodeValue(""); }}
+                className="p-1 rounded-md text-white/40 hover:text-white hover:bg-white/5 transition"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+            <p className="text-xs text-white/40 mb-3">Enter the project code shared by the project creator.</p>
+            <input
+              autoFocus
+              value={joinCodeValue}
+              onChange={(e) => setJoinCodeValue(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && handleJoinByCode()}
+              placeholder="e.g. ABC123"
+              className="w-full rounded-lg border border-white/10 bg-[#0b0a0b] px-3 py-2 text-sm text-white font-mono placeholder:text-white/30 outline-none focus:border-white/20 mb-4"
+            />
+            <button
+              onClick={handleJoinByCode}
+              disabled={!joinCodeValue.trim() || joinCodeLoading}
+              className="w-full flex items-center justify-center gap-2 rounded-lg bg-white px-4 py-2 text-sm font-medium text-black hover:bg-white/90 transition disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {joinCodeLoading ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <Send className="h-3.5 w-3.5" />
+              )}
+              Request to Join
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
