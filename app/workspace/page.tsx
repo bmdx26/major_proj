@@ -3,18 +3,18 @@
 import { useState, useEffect, useRef, use } from "react";
 import dynamicImport from "next/dynamic";
 import { ImageIcon, VideoIcon, MusicIcon, Loader2, X, CheckCircle2, XCircle, ArrowUpDown, UserMinus } from "lucide-react";
+import ChatPanel from "@/components/chats/ChatPanel";
 import { ChatInput } from "@/components/chats/ChatInput";
 import { useWorkspace } from "@/components/workspace/WorkspaceContext";
 import {
   fetchProjectMembers,
-  fetchMyRole,
   fetchMyRoleInfo,
   changeRole,
   removeMember,
   fetchIncomingRequests,
   acceptRequest,
   rejectRequest,
-  sendChatMessage,
+  sendAIChatMessage,
   fetchReconstructions as fetchReconstructionsApi,
   fetchReportVersions as fetchReportVersionsApi,
   generateReportStream,
@@ -57,7 +57,7 @@ const MapViewer = dynamicImport(
 
 /* ---------------- TYPES ---------------- */
 
-type ChatMessage = {
+type AIChatMessage = {
   id: string;
   from: "user" | "assistant";
   text: string;
@@ -73,27 +73,25 @@ const AWS_REGION = "ap-south-1";
 
 function MembersPanel() {
   const [members, setMembers] = useState<ProjectMember[]>([]);
-  const [myRole, setMyRole] = useState<MemberRole>("member");
   const [roleInfo, setRoleInfo] = useState<MyRoleInfo | null>(null);
   const [loading, setLoading] = useState(true);
   const [actioning, setActioning] = useState<string | null>(null);
 
- 
-
-
+  // Derive lowercase role from roleInfo
+  const myRole: MemberRole = roleInfo
+    ? (roleInfo.role.toLowerCase() as MemberRole)
+    : "member";
 
   useEffect(() => {
     const projectId = localStorage.getItem("projectId");
     if (!projectId) { setLoading(false); return; }
     (async () => {
       setLoading(true);
-      const [membersList, role, info] = await Promise.all([
+      const [membersList, info] = await Promise.all([
         fetchProjectMembers(projectId),
-        fetchMyRole(projectId),
         fetchMyRoleInfo(projectId),
       ]);
       setMembers(membersList);
-      setMyRole(role);
       setRoleInfo(info);
       setLoading(false);
     })();
@@ -107,30 +105,25 @@ function MembersPanel() {
    */
   function canChangeRole(target: ProjectMember): MemberRole | null {
     if (target.role === "creator") return null; // nobody can change the creator
-    // Use permissions from /projects/:projectId/me when available
-    if (roleInfo?.permissions) {
-      if (!roleInfo.permissions.canPromoteMembers) return null;
-      return target.role === "member" ? "coordinator" : "member";
-    }
-    // Fallback to old logic
+    // Creator: can promote member→coordinator, demote coordinator→member
     if (myRole === "creator") {
       return target.role === "member" ? "coordinator" : "member";
     }
+    // Coordinator: can only promote member→coordinator (cannot demote coordinators)
     if (myRole === "coordinator") {
       return target.role === "member" ? "coordinator" : null;
     }
+    // Member: view only
     return null;
   }
 
   function canRemove(target: ProjectMember): boolean {
     if (target.role === "creator") return false;
-    // Use permissions from /projects/:projectId/me when available
-    if (roleInfo?.permissions) {
-      return roleInfo.permissions.canApproveMembers;
-    }
-    // Fallback to old logic
+    // Creator: can remove coordinators and members
     if (myRole === "creator") return true;
+    // Coordinator: can only remove members (not other coordinators)
     if (myRole === "coordinator" && target.role === "member") return true;
+    // Member: cannot remove anyone
     return false;
   }
 
@@ -146,7 +139,7 @@ function MembersPanel() {
     const newRole = canChangeRole(member);
     if (!newRole) return;
     setActioning(member.id);
-    const ok = await changeRole(projectId, member.id, newRole);
+    const ok = await changeRole(projectId, member.userId, newRole);
     if (ok) {
       setMembers((prev) => prev.map((m) => (m.id === member.id ? { ...m, role: newRole } : m)));
     } else {
@@ -160,7 +153,7 @@ function MembersPanel() {
     if (!projectId) return;
     if (!confirm(`Remove ${member.userName} from this project?`)) return;
     setActioning(member.id);
-    const ok = await removeMember(projectId, member.id);
+    const ok = await removeMember(projectId, member.userId);
     if (ok) {
       setMembers((prev) => prev.filter((m) => m.id !== member.id));
     } else {
@@ -530,56 +523,74 @@ export default function WorkspacePage() {
 
   /* API functions are now imported from @/lib/api */
 
-  /* ---------- CHAT ---------- */
-  const [messages, setMessages] = useState<ChatMessage[]>([]);
-  const [chatMounted, setChatMounted] = useState(false);
-  const [chatLoading, setChatLoading] = useState(false);
-  const chatBottomRef = useRef<HTMLDivElement>(null);
+  /* ---------- ROLE (for section gating) ---------- */
+  const [pageRoleInfo, setPageRoleInfo] = useState<MyRoleInfo | null>(null);
 
-  // Load persisted history AFTER hydration (avoids SSR mismatch)
+  useEffect(() => {
+    const projectId = localStorage.getItem("projectId");
+    if (!projectId) return;
+    (async () => {
+      const info = await fetchMyRoleInfo(projectId);
+      setPageRoleInfo(info);
+    })();
+  }, []);
+
+  const pageRole: MemberRole = pageRoleInfo
+    ? (pageRoleInfo.role.toLowerCase() as MemberRole)
+    : "member";
+  const isMember = pageRole === "member";
+  const canGenerateReport = pageRoleInfo?.permissions?.canGenerateReport ?? false;
+  const canRunReconstruction = pageRoleInfo?.permissions?.canRunReconstruction ?? false;
+
+  /* ---------- AI CHAT ---------- */
+  const [aiMessages, setAiMessages] = useState<AIChatMessage[]>([]);
+  const [aiChatMounted, setAiChatMounted] = useState(false);
+  const [aiChatLoading, setAiChatLoading] = useState(false);
+  const aiChatBottomRef = useRef<HTMLDivElement>(null);
+
+  // Load persisted AI chat history
   useEffect(() => {
     const projectId = localStorage.getItem("projectId");
     const key = `chatMessages_${projectId ?? "default"}`;
     try {
       const saved = localStorage.getItem(key);
       if (saved) {
-        const parsed = JSON.parse(saved) as ChatMessage[];
-        // Filter out old report-like messages stuck in chat history
+        const parsed = JSON.parse(saved) as AIChatMessage[];
         const clean = parsed.filter((m) => {
           if (m.from !== "assistant") return true;
           if (m.text.startsWith("{") && m.text.includes("fullText")) return false;
           if (m.text.length > 2000) return false;
           return true;
         });
-        setMessages(clean);
+        setAiMessages(clean);
       }
     } catch { /* ignore */ }
-    setChatMounted(true);
+    setAiChatMounted(true);
   }, []);
 
-  // Persist only after the load effect has run (skip the initial empty render)
+  // Persist AI chat messages
   useEffect(() => {
-    if (!chatMounted) return;
+    if (!aiChatMounted) return;
     const projectId = localStorage.getItem("projectId");
     const key = `chatMessages_${projectId ?? "default"}`;
     try {
-      localStorage.setItem(key, JSON.stringify(messages));
-    } catch { /* quota exceeded — ignore */ }
-  }, [messages, chatMounted]);
+      localStorage.setItem(key, JSON.stringify(aiMessages));
+    } catch { /* quota exceeded */ }
+  }, [aiMessages, aiChatMounted]);
 
-  const handleSend = async (text: string) => {
+  const handleAISend = async (text: string) => {
     const projectId = typeof window !== "undefined" ? localStorage.getItem("projectId") : null;
     const now = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 
-    setMessages((prev) => [
+    setAiMessages((prev) => [
       ...prev,
       { id: crypto.randomUUID(), from: "user", text, timestamp: now },
     ]);
-    setChatLoading(true);
+    setAiChatLoading(true);
 
     try {
-      const replyText = await sendChatMessage(projectId!, text);
-      setMessages((prev) => [
+      const replyText = await sendAIChatMessage(projectId!, text);
+      setAiMessages((prev) => [
         ...prev,
         {
           id: crypto.randomUUID(),
@@ -589,7 +600,7 @@ export default function WorkspacePage() {
         },
       ]);
     } catch {
-      setMessages((prev) => [
+      setAiMessages((prev) => [
         ...prev,
         {
           id: crypto.randomUUID(),
@@ -599,7 +610,7 @@ export default function WorkspacePage() {
         },
       ]);
     } finally {
-      setChatLoading(false);
+      setAiChatLoading(false);
     }
   };
 
@@ -641,6 +652,7 @@ export default function WorkspacePage() {
   /* ---------- PDF PREVIEW ---------- */
   const [pdfZoom, setPdfZoom] = useState(0.7);
   const [reportGenerating, setReportGenerating] = useState(false);
+  const [reportStreamText, setReportStreamText] = useState("");
   const [reportVersions, setReportVersions] = useState<ReportVersion[]>([]);
   const [selectedReport, setSelectedReport] = useState<ReportVersion | null>(null);
 
@@ -750,20 +762,10 @@ export default function WorkspacePage() {
     if (!projectId) { alert("No project found. Please create a project first."); return; }
 
     setReportGenerating(true);
+    setReportStreamText("Generating report...\n\n");
     try {
       const reportRes = await generateReportStream(projectId);
       console.log("Report response:", reportRes);
-      const assistantId = crypto.randomUUID();
-
-      setMessages((prev) => [
-        ...prev,
-        {
-          id: assistantId,
-          from: "assistant",
-          text: "🧠 Generating report...\n\n",
-          timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
-        },
-      ]);
 
       const reader = reportRes.body!.getReader();
       const decoder = new TextDecoder();
@@ -784,41 +786,21 @@ export default function WorkspacePage() {
           const msg = JSON.parse(line);
           if (msg.stage === "Textgen_stream" && msg.chunk) {
             fullText += msg.chunk;
-            setMessages((prev) =>
-              prev.map((m) =>
-                m.id === assistantId ? { ...m, text: fullText } : m
-              )
-            );
+            setReportStreamText(fullText);
           }
         }
       }
       // After report fully streamed
       localStorage.setItem("latestReport", fullText);
-      console.log("Report response:", reportRes);
-      setMessages((prev) => prev.map((m) =>
-        m.id === assistantId ? { ...m, text: fullText } : m
-      ));
+      setReportStreamText("");
       // Refresh versions list and auto-select new version
       await fetchReportVersionsLocal();
     } catch {
-      setMessages((prev) => [
-        ...prev,
-        {
-          id: crypto.randomUUID(),
-          from: "assistant",
-          text: "⚠️ Failed to generate report.",
-          timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
-        },
-      ]);
+      setReportStreamText("Failed to generate report.");
     } finally {
       setReportGenerating(false);
     }
   }
-
-  /* ---------- AUTO-SCROLL CHAT TO BOTTOM ---------- */
-  useEffect(() => {
-    chatBottomRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages, chatLoading]);
 
   /* ---------- FETCH REPORT VERSIONS ON MOUNT ---------- */
   useEffect(() => {
@@ -992,22 +974,29 @@ export default function WorkspacePage() {
 
   /* ---------------- UI ---------------- */
 
+  const projectName = typeof window !== "undefined" ? localStorage.getItem("projectName") : null;
+
   return (
     <div className="flex-1 flex flex-col p-6 overflow-hidden">
+      {projectName && (
+        <h1 className="text-2xl font-bold text-white mb-4 truncate" title={projectName}>
+          {projectName}
+        </h1>
+      )}
       <div className="flex-1 w-full rounded-xl border border-white/10 bg-[#0f0e0f] p-6 overflow-hidden">
 
-            {/* CHAT */}
+            {/* CHAT (AI Assistant) */}
             {activeTab === "chat" && (
               <div className="h-full flex flex-col">
               {/* Messages area */}
               <div className="overflow-y-auto rounded-xl border border-white/10 bg-[#0b0a0b] p-4 flex flex-col gap-3" style={{ height: "calc(100vh - 320px)", minHeight: "300px" }}>
-                {messages.length === 0 && !chatLoading && (
+                {aiMessages.length === 0 && !aiChatLoading && (
                   <div className="flex-1 flex items-center justify-center text-sm text-white/25 select-none">
                     Start the conversation…
                   </div>
                 )}
 
-                {messages.map((msg) => (
+                {aiMessages.map((msg) => (
                   <div
                     key={msg.id}
                     className={`flex flex-col gap-1 ${
@@ -1028,7 +1017,7 @@ export default function WorkspacePage() {
                 ))}
 
                 {/* Typing indicator */}
-                {chatLoading && (
+                {aiChatLoading && (
                   <div className="flex flex-col items-start gap-1">
                     <div className="bg-[#1f1e1f] border border-white/10 rounded-2xl rounded-bl-sm px-4 py-3 flex items-center gap-1.5">
                       <span className="w-1.5 h-1.5 bg-white/50 rounded-full animate-bounce" style={{ animationDelay: "0ms" }} />
@@ -1039,17 +1028,17 @@ export default function WorkspacePage() {
                   </div>
                 )}
 
-                <div ref={chatBottomRef} />
+                <div ref={aiChatBottomRef} />
               </div>
 
               {/* Input */}
               <div className="mt-3 flex items-center gap-2">
                 <div className="flex-1">
-                  <ChatInput onSend={handleSend} disabled={chatLoading} />
+                  <ChatInput onSend={handleAISend} disabled={aiChatLoading} />
                 </div>
-                {messages.length > 0 && (
+                {aiMessages.length > 0 && (
                   <button
-                    onClick={() => setMessages([])}
+                    onClick={() => setAiMessages([])}
                     className="shrink-0 text-xs text-white/30 hover:text-white/60 transition px-2 py-1 rounded-md hover:bg-white/5"
                     title="Clear chat history"
                   >
@@ -1060,9 +1049,22 @@ export default function WorkspacePage() {
               </div>
             )}
 
+            {/* COMMUNITY CHAT */}
+            {activeTab === "community" && (
+              <div className="h-full">
+                <ChatPanel projectId={typeof window !== "undefined" ? localStorage.getItem("projectId") || "" : ""} />
+              </div>
+            )}
+
             {/* UPLOAD MORE */}
             {activeTab === "upload more" && (
               <div className="h-full flex flex-col gap-4 max-w-lg mx-auto w-full pt-4">
+              {isMember ? (
+                <div className="flex-1 flex items-center justify-center text-sm text-white/25">
+                  You do not have permission to upload files.
+                </div>
+              ) : (
+              <>
               {/* Drop Zone */}
               <div
                 onDragOver={(e) => { e.preventDefault(); setDragging2(true); }}
@@ -1125,6 +1127,8 @@ export default function WorkspacePage() {
                   "Submit Additional Files"
                 )}
               </button>
+              </>
+              )}
               </div>
             )}
 
@@ -1141,14 +1145,16 @@ export default function WorkspacePage() {
 
               {/* LEFT - Report Versions List */}
               <div className="col-span-3 flex flex-col gap-4 h-full overflow-auto">
-                {/* Create Report Button */}
-                <button
-                  onClick={generateReport}
-                  disabled={reportGenerating}
-                  className="w-full px-4 py-2 rounded-lg bg-white text-black text-sm font-medium hover:bg-white/90 transition disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
-                >
-                  + Create Latest Report
-                </button>
+                {/* Create Report Button — hidden for members */}
+                {canGenerateReport && (
+                  <button
+                    onClick={generateReport}
+                    disabled={reportGenerating}
+                    className="w-full px-4 py-2 rounded-lg bg-white text-black text-sm font-medium hover:bg-white/90 transition disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                  >
+                    + Create Latest Report
+                  </button>
+                )}
 
                 {/* Loading UI */}
                 {reportGenerating && (
@@ -1427,19 +1433,22 @@ export default function WorkspacePage() {
 
               {/* LEFT */}
               <div className="col-span-3 flex flex-col gap-4">
-                <div className="rounded-xl border border-white/10 bg-[#0b0a0b] p-3">
-                  <ModelUploadPanel
-                    files={files}
-                    dragging={dragging}
-                    setDragging={setDragging}
-                    onFiles={handleFiles}
-                    onRemove={removeFile}
-                    projectId={typeof window !== 'undefined' ? localStorage.getItem("projectId") || "" : ""}
-                    setGlobalLoading={setLoading}
-                    onUploadComplete={fetchReconstructionsLocal}
-                    disabled={loading}
-                  />
-                </div>
+                {/* Model upload — hidden for members */}
+                {canRunReconstruction && (
+                  <div className="rounded-xl border border-white/10 bg-[#0b0a0b] p-3">
+                    <ModelUploadPanel
+                      files={files}
+                      dragging={dragging}
+                      setDragging={setDragging}
+                      onFiles={handleFiles}
+                      onRemove={removeFile}
+                      projectId={typeof window !== 'undefined' ? localStorage.getItem("projectId") || "" : ""}
+                      setGlobalLoading={setLoading}
+                      onUploadComplete={fetchReconstructionsLocal}
+                      disabled={loading}
+                    />
+                  </div>
+                )}
 
                 <div className="rounded-xl border border-white/10 bg-[#0b0a0b] p-2 space-y-1">
                   {reconstructions.length === 0 && (

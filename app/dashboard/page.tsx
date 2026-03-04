@@ -202,6 +202,17 @@ const params = new URLSearchParams(window.location.search);
 
   function handleOpenProject(projectId: string) {
     localStorage.setItem("projectId", projectId);
+    // Find project from already-fetched data
+    const project =
+      myProjects.find((p) => p.id === projectId) ??
+      joinedProjects.find((p) => p.id === projectId);
+    if (project) {
+      localStorage.setItem("projectName", project.title);
+    }
+    if (project?.latitude != null && project?.longitude != null) {
+      localStorage.setItem("projectLat", String(project.latitude));
+      localStorage.setItem("projectLng", String(project.longitude));
+    }
     router.push("/workspace");
   }
 
@@ -241,6 +252,7 @@ const params = new URLSearchParams(window.location.search);
     localStorage.removeItem("userName");
     localStorage.removeItem("userDesignation");
     localStorage.removeItem("projectId");
+    localStorage.removeItem("projectName");
     router.push("/login");
   }
 

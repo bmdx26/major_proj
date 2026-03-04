@@ -11,6 +11,7 @@ export type MyPermissions = {
   canRunReconstruction: boolean;
   canGenerateReport: boolean;
   canDeleteProject: boolean;
+  canChat?: boolean;
 };
 
 export type MyRoleInfo = {

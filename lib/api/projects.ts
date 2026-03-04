@@ -9,12 +9,16 @@ export type Project = {
   id: string;
   title: string;
   createdAt: string;
+  latitude?: number;
+  longitude?: number;
 };
 
 export type JoinedProject = {
   id: string;
   title: string;
   role: string;
+  latitude?: number;
+  longitude?: number;
 };
 
 /** Raw item returned by GET /projects/my */
@@ -23,6 +27,8 @@ type ProjectItem = {
   title: string;
   createdAt: string;
   role: string;
+  latitude?: number;
+  longitude?: number;
 };
 
 export type SearchResult = {
@@ -68,7 +74,7 @@ export async function fetchMyProjects(): Promise<Project[]> {
   const all = await fetchAllProjects();
   return all
     .filter((p) => p.role.toUpperCase() === "CREATOR")
-    .map(({ id, title, createdAt }) => ({ id, title, createdAt }));
+    .map(({ id, title, createdAt, latitude, longitude }) => ({ id, title, createdAt, latitude, longitude }));
 }
 
 /** Projects where the current user is a coordinator or member */
@@ -79,7 +85,7 @@ export async function fetchJoinedProjects(): Promise<JoinedProject[]> {
       const r = p.role.toUpperCase();
       return r === "COORDINATOR" || r === "MEMBER";
     })
-    .map(({ id, title, role }) => ({ id, title, role }));
+    .map(({ id, title, role, latitude, longitude }) => ({ id, title, role, latitude, longitude }));
 }
 
 /** GET /projects/search?q=<query> */

@@ -119,6 +119,7 @@ export default function InputScreen() {
 
       console.log("Post created:", result);
       localStorage.setItem("projectId", result.id);
+      localStorage.setItem("projectName", title);
       localStorage.setItem("projectLat", String(latitude));
       localStorage.setItem("projectLng", String(longitude));
       // move to step 2 only after successful POST

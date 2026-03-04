@@ -16,27 +16,47 @@ import {
   Copy,
   Check,
   Loader2,
+  MessagesSquare,
 } from "lucide-react";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { useWorkspace, type WorkspaceTab } from "./WorkspaceContext";
-import { fetchJoinCode } from "@/lib/api";
+import { fetchJoinCode, fetchMyRoleInfo } from "@/lib/api";
+import type { MemberRole } from "@/lib/api";
 
 const NAV_ITEMS: { value: WorkspaceTab; label: string; icon: typeof MessageSquare }[] = [
-  { value: "chat",         label: "Chat",        icon: MessageSquare },
-  { value: "upload more",  label: "Upload",      icon: Upload },
-  { value: "emergency",    label: "Emergency",   icon: ShieldAlert },
-  { value: "reports",      label: "Reports",     icon: FileText },
-  { value: "models",       label: "Models",      icon: Box },
-  { value: "location",     label: "Location",    icon: MapPin },
-  { value: "requests",     label: "Requests",    icon: Inbox },
-  { value: "members",      label: "Members",     icon: UsersRound },
+  { value: "chat",         label: "Chat",           icon: MessageSquare },
+  { value: "community",    label: "Community",      icon: MessagesSquare },
+  { value: "upload more",  label: "Upload",         icon: Upload },
+  { value: "emergency",    label: "Emergency",      icon: ShieldAlert },
+  { value: "reports",      label: "Reports",        icon: FileText },
+  { value: "models",       label: "Models",         icon: Box },
+  { value: "location",     label: "Location",       icon: MapPin },
+  { value: "requests",     label: "Requests",       icon: Inbox },
+  { value: "members",      label: "Members",        icon: UsersRound },
 ];
 
 export default function WorkspaceSidebar() {
   const { activeTab, setActiveTab } = useWorkspace();
   const [collapsed, setCollapsed] = useState(false);
   const router = useRouter();
+
+  /* Current user's role */
+  const [myRole, setMyRole] = useState<MemberRole>("member");
+  useEffect(() => {
+    const projectId = localStorage.getItem("projectId");
+    if (!projectId) return;
+    (async () => {
+      const info = await fetchMyRoleInfo(projectId);
+      if (info) setMyRole(info.role.toLowerCase() as MemberRole);
+    })();
+  }, []);
+
+  /* Filter nav items based on role */
+  const visibleNavItems = NAV_ITEMS.filter((item) => {
+    if (item.value === "requests" && myRole === "member") return false;
+    return true;
+  });
 
   /* Project code state */
   const [joinCode, setJoinCode] = useState<string | null>(null);
@@ -90,7 +110,7 @@ export default function WorkspaceSidebar() {
 
       {/* Navigation items */}
       <nav className="flex-1 flex flex-col gap-1 px-2 py-3">
-        {NAV_ITEMS.map(({ value, label, icon: Icon }) => {
+        {visibleNavItems.map(({ value, label, icon: Icon }) => {
           const isActive = activeTab === value;
           return (
             <button
