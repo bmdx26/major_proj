@@ -25,6 +25,7 @@ import {
   searchProjects,
   sendJoinRequestByCode,
   cancelJoinRequest,
+  fetchCurrentUser,
 } from "@/lib/api";
 import type {
   Project,
@@ -161,19 +162,28 @@ const params = new URLSearchParams(window.location.search);
       
     }
 
-    setUserName(localStorage.getItem("userName") || "User");
-    setUserDesignation(localStorage.getItem("userDesignation") || "Member");
-
     async function load() {
       setLoading(true);
-      const [projects, joined, requests] = await Promise.all([
+      const [projects, joined, requests, me] = await Promise.all([
         fetchMyProjects(),
         fetchJoinedProjects(),
         fetchMyRequests(),
+        fetchCurrentUser(),
       ]);
       setMyProjects(projects);
       setJoinedProjects(joined);
       setMyRequests(requests);
+
+      if (me) {
+        setUserName(me.name || "User");
+        setUserDesignation(me.designation || "Member");
+        localStorage.setItem("userName", me.name || "User");
+        localStorage.setItem("userDesignation", me.designation || "Member");
+      } else {
+        setUserName(localStorage.getItem("userName") || "User");
+        setUserDesignation(localStorage.getItem("userDesignation") || "Member");
+      }
+
       setLoading(false);
     }
     load();
